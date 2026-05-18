@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'firebase_options.dart'; // flutterfire configureで生成されたファイル
 import 'package:mori_game/pages/GamePage.dart';
 
@@ -8,6 +9,10 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // ↓ これを追加！ URLは Firebase Console の Realtime Database 画面上部にある
+  // https://[プロジェクト名]-default-rtdb.firebaseio.com/ のような形式のものです。
+  FirebaseDatabase.instance.databaseURL = "https://mori-game-default-rtdb.firebaseio.com/";
+
   runApp(const MoriApp());
 }
 
