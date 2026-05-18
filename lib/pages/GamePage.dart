@@ -16,7 +16,7 @@ class _GamePageState extends State<GamePage> {
   // 修正：DatabaseURLをここでも明示的に指定（パースエラー対策）
   final DatabaseReference _roomRef = FirebaseDatabase.instanceFor(
     app: FirebaseDatabase.instance.app,
-    databaseURL: "https://morigame-default-rtdb.firebaseio.com/",
+    databaseURL: "https://morigame-default-rtdb.asia-southeast1.firebasedatabase.app", 
   ).ref('rooms/test_room');
 
   StreamSubscription<DatabaseEvent>? _roomSubscription;
