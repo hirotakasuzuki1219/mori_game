@@ -19,7 +19,6 @@ class _GamePageState extends State<GamePage> {
   List<CardModel> deck = [];   
   List<CardModel> myHand = []; 
   
-  // 場の状態
   int fieldNumber = 0;
   Suit fieldSuit = Suit.joker;
   bool isInitialPhase = true;
@@ -27,7 +26,7 @@ class _GamePageState extends State<GamePage> {
   @override
   void initState() {
     super.initState();
-    _setupGame();
+    _startNewGame();
     _listenToRoom();
   }
 
@@ -37,7 +36,6 @@ class _GamePageState extends State<GamePage> {
     super.dispose();
   }
 
-  // Firebaseの監視
   void _listenToRoom() {
     _roomSubscription = _roomRef.onValue.listen((event) {
       final data = event.snapshot.value as Map?;
@@ -51,15 +49,13 @@ class _GamePageState extends State<GamePage> {
             (e) => e.name == field['suit'],
             orElse: () => Suit.joker,
           );
-          // isInitialPhaseの同期
           isInitialPhase = data['isInitialPhase'] ?? true;
         });
       }
     });
   }
 
-  void _setupGame() {
-    // 山札生成
+  void _startNewGame() {
     List<CardModel> newDeck = [];
     for (var suit in Suit.values) {
       if (suit == Suit.joker) {
@@ -72,31 +68,49 @@ class _GamePageState extends State<GamePage> {
     }
     newDeck.shuffle();
 
+    List<CardModel> initialHand = newDeck.sublist(0, 5);
+    newDeck.removeRange(0, 5);
+
+    final firstCard = newDeck.removeLast();
+
     setState(() {
       deck = newDeck;
-      myHand = deck.sublist(0, 5);
-      deck.removeRange(0, 5);
+      myHand = initialHand;
     });
 
-    // 【重要】最初は必ずJOKERからスタート
     _roomRef.set({
       'field': {
-        'number': 0,
-        'suit': Suit.joker.name,
+        'number': firstCard.number,
+        'suit': firstCard.suit.name,
       },
       'isInitialPhase': true,
       'status': 'playing'
     });
   }
 
-  // 山札から引く
+  // 山札からカードを引く処理
   void _drawCard() {
-    if (deck.isEmpty) return;
+    if (deck.isEmpty || isInitialPhase) return;
+
+    // 【修正箇所】手札が7枚の時のルールチェック
+    if (myHand.length == 7) {
+      if (_hasPlayableCard()) {
+        // 出せるカードがある場合は引けない
+        _showErrorSnackBar('出せるカードがあるため、これ以上引けません！');
+        return;
+      } else {
+        // 出せるカードがないのに7枚からさらに引こうとしたら負け（バースト）
+        _showResultDialog("バースト", "7枚で出せるカードがなく、山札を引いたため負けです。");
+        return;
+      }
+    }
+
     setState(() {
       myHand.add(deck.removeLast());
-      // 7枚制限の敗北判定
+      
+      // 引いた結果7枚になり、かつ出せるカードが一切ない場合はその瞬間に負け
       if (myHand.length == 7 && !_hasPlayableCard()) {
-        _showResultDialog("負け", "出せるカードがなく、7枚に達しました。");
+        _showResultDialog("バースト", "7枚目を引きましたが、出せるカードがないため負けです。");
       }
     });
   }
@@ -106,16 +120,15 @@ class _GamePageState extends State<GamePage> {
     return myHand.any((c) => c.number == fieldNumber || c.suit == fieldSuit);
   }
 
-  // カードを出す処理
   void _playCard(CardModel card) {
     bool canPlay = false;
 
     if (fieldSuit == Suit.joker) {
-      canPlay = true; // 場がJOKERなら何でも出せる
+      canPlay = true; 
     } else if (isInitialPhase) {
-      if (card.number == fieldNumber) canPlay = true; // 初期は数字一致のみ
+      if (card.number == fieldNumber) canPlay = true;
     } else {
-      if (card.number == fieldNumber || card.suit == fieldSuit) canPlay = true; // 通常
+      if (card.number == fieldNumber || card.suit == fieldSuit) canPlay = true;
     }
 
     if (canPlay) {
@@ -123,25 +136,24 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
-  // Firebaseの「場」を更新する
   void _updateFirebaseField(CardModel card) {
-    // 自分の手札から削除
     setState(() {
       myHand.remove(card);
     });
 
-    // Firebaseの値を更新（これにより他全員の画面が listen 経由で更新される）
     _roomRef.update({
       'field': {
         'number': card.number,
         'suit': card.suit.name,
       },
-      'isInitialPhase': false, // 誰かが出した時点で初期フェーズ終了
-    }).then((_) {
-      print("Firebase field updated successfully");
-    }).catchError((error) {
-      print("Failed to update field: $error");
+      'isInitialPhase': false, 
     });
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(milliseconds: 1500)),
+    );
   }
 
   void _showResultDialog(String title, String message) {
@@ -152,7 +164,7 @@ class _GamePageState extends State<GamePage> {
         title: Text(title),
         content: Text(message),
         actions: [
-          TextButton(onPressed: () { Navigator.pop(context); _setupGame(); }, child: const Text('リセット')),
+          TextButton(onPressed: () { Navigator.pop(context); _startNewGame(); }, child: const Text('リセット')),
         ],
       ),
     );
@@ -160,18 +172,16 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    // もり判定
     bool canMori = !isInitialPhase && fieldSuit != Suit.joker &&
                    (MoriLogic.checkNormalMori(fieldNumber, myHand) ||
                     MoriLogic.checkSpecialMori(fieldNumber, myHand));
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
-      appBar: AppBar(title: const Text('もり - Firebase対戦'), backgroundColor: Colors.transparent),
+      appBar: AppBar(title: const Text('もり - 同期プレイ'), backgroundColor: Colors.transparent),
       body: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // 山札
           Padding(
             padding: const EdgeInsets.only(top: 20),
             child: GestureDetector(
@@ -179,7 +189,7 @@ class _GamePageState extends State<GamePage> {
               child: Container(
                 width: 70, height: 100,
                 decoration: BoxDecoration(
-                  color: Colors.blueGrey[900],
+                  color: isInitialPhase ? Colors.grey : Colors.blueGrey[900],
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.white, width: 2),
                 ),
@@ -188,11 +198,10 @@ class _GamePageState extends State<GamePage> {
             ),
           ),
 
-          // 中央：場
           Column(
             children: [
               Text(
-                fieldSuit == Suit.joker ? '【開始】好きなカードを出せ！' : '場のカード', 
+                isInitialPhase ? '【初期】同じ数字を出せ！' : '共有の場', 
                 style: const TextStyle(color: Colors.yellow, fontWeight: FontWeight.bold)
               ),
               const SizedBox(height: 10),
@@ -203,13 +212,12 @@ class _GamePageState extends State<GamePage> {
             ],
           ),
 
-          // 下部
           Container(
             padding: const EdgeInsets.only(bottom: 30),
             child: Column(
               children: [
                 ElevatedButton(
-                  onPressed: canMori ? () => _showResultDialog("もり！", "勝利！") : null,
+                  onPressed: canMori ? () => _showResultDialog("もり！", "成功！") : null,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
                   child: const Text('もり！'),
                 ),
@@ -224,7 +232,12 @@ class _GamePageState extends State<GamePage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                Text('手札: ${myHand.length}/7', style: const TextStyle(color: Colors.white70)),
+                Text('手札: ${myHand.length}/7', 
+                  style: TextStyle(
+                    color: myHand.length >= 7 ? Colors.redAccent : Colors.white70,
+                    fontWeight: myHand.length >= 7 ? FontWeight.bold : FontWeight.normal
+                  )
+                ),
               ],
             ),
           ),
