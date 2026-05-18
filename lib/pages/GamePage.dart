@@ -14,8 +14,9 @@ class _GamePageState extends State<GamePage> {
   List<CardModel> deck = [];   
   List<CardModel> myHand = []; 
   
-  int fieldNumber = 8;
-  Suit fieldSuit = Suit.spade;
+  int fieldNumber = 0;
+  Suit fieldSuit = Suit.joker;
+  bool isInitialPhase = true; // 開始時のみのフェーズ管理
 
   @override
   void initState() {
@@ -40,56 +41,101 @@ class _GamePageState extends State<GamePage> {
       deck = newDeck;
       myHand = deck.sublist(0, 5);
       deck.removeRange(0, 5);
+      isInitialPhase = true;
       
-      final firstCard = deck.removeLast();
-      fieldNumber = firstCard.number;
-      fieldSuit = firstCard.suit;
+      // 最初の有効な1枚が決まるまで自動でめくる
+      _determineInitialFieldCard();
+    });
+  }
+
+  // 開始時のみ：誰も出せない場合は山札をめくり続ける
+  void _determineInitialFieldCard() {
+    if (deck.isEmpty) return;
+
+    final nextCard = deck.removeLast();
+    
+    // 自分（または参加者）がその数字を持っているかチェック
+    bool anyoneHasNumber = myHand.any((c) => c.number == nextCard.number);
+
+    setState(() {
+      fieldNumber = nextCard.number;
+      fieldSuit = nextCard.suit;
+    });
+
+    if (!anyoneHasNumber) {
+      // 誰の手札にも同じ数字がないなら、少し待って次をめくる（演出用）
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted && isInitialPhase) {
+          _determineInitialFieldCard();
+        }
+      });
+    } else {
+      // 誰かが持っているならプレイ開始
+      setState(() {
+        isInitialPhase = false;
+      });
+    }
+  }
+
+  bool _hasPlayableCard() {
+    return myHand.any((card) {
+      if (fieldSuit == Suit.joker) return true;
+      if (card.number == fieldNumber) return true;
+      if (card.suit == fieldSuit) return true;
+      return false;
     });
   }
 
   void _drawCard() {
-    if (deck.isEmpty) return;
+    if (deck.isEmpty || isInitialPhase) return;
+
     setState(() {
-      myHand.add(deck.removeLast());
-      if (myHand.length > 7) {
-        _showResultDialog("ゲームオーバー", "手札が8枚以上になったため負けです。");
+      CardModel drawnCard = deck.removeLast();
+      myHand.add(drawnCard);
+
+      if (myHand.length == 7) {
+        if (!_hasPlayableCard()) {
+          _showResultDialog("バースト", "7枚目を引きましたが、出せるカードがないため負けです。");
+        }
       }
     });
   }
 
-  // カードを出すメインロジック（修正版）
   void _playCard(CardModel card) {
-    bool canPlay = false;
-
-    if (fieldSuit == Suit.joker) {
-      // 1. 場がジョーカーなら何でも出せる
-      canPlay = true;
-    } else if (card.number == fieldNumber) {
-      // 2. 同じ数字なら出せる（割り込み・優先ルール）
-      canPlay = true;
-    } else if (card.suit == fieldSuit) {
-      // 3. 同じマーク（スート）なら出せる（通常ルール）
-      canPlay = true;
-    }
-
-    if (canPlay) {
-      setState(() {
-        fieldNumber = card.number;
-        fieldSuit = card.suit;
-        myHand.remove(card);
-      });
-      
-      if (myHand.isEmpty) {
-        _showResultDialog("勝利！", "手札をすべて出し切りました！");
+    if (isInitialPhase) {
+      // 初期フェーズは同じ数字しか出せない（割り込み）
+      if (card.number == fieldNumber) {
+        _executePlay(card);
+      } else {
+        _showErrorSnackBar('最初は同じ数字の人しか出せません！');
       }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('同じ数字か同じマークしか出せません！'),
-          duration: Duration(milliseconds: 500),
-        ),
-      );
+      return;
     }
+
+    // 通常プレイ：同じマーク or 同じ数字
+    if (fieldSuit == Suit.joker || card.number == fieldNumber || card.suit == fieldSuit) {
+      _executePlay(card);
+    } else {
+      _showErrorSnackBar('出せません！');
+    }
+  }
+
+  void _executePlay(CardModel card) {
+    setState(() {
+      fieldNumber = card.number;
+      fieldSuit = card.suit;
+      myHand.remove(card);
+      isInitialPhase = false; // 誰かが出せば確実に初期フェーズ終了
+    });
+    if (myHand.isEmpty) {
+      _showResultDialog("勝利！", "出し切りました！");
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(milliseconds: 500)),
+    );
   }
 
   void _showResultDialog(String title, String message) {
@@ -100,13 +146,7 @@ class _GamePageState extends State<GamePage> {
         title: Text(title),
         content: Text(message),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _startNewGame();
-            },
-            child: const Text('もう一度遊ぶ'),
-          )
+          TextButton(onPressed: () { Navigator.pop(context); _startNewGame(); }, child: const Text('リセット')),
         ],
       ),
     );
@@ -114,20 +154,13 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    // もり判定（ジョーカーが場にある時は成立しないルールを適用）
-    bool canMori = false;
-    if (fieldSuit != Suit.joker) {
-      canMori = MoriLogic.checkNormalMori(fieldNumber, myHand) ||
-                MoriLogic.checkSpecialMori(fieldNumber, myHand);
-    }
+    bool canMori = !isInitialPhase && fieldSuit != Suit.joker &&
+                   (MoriLogic.checkNormalMori(fieldNumber, myHand) ||
+                    MoriLogic.checkSpecialMori(fieldNumber, myHand));
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
-      appBar: AppBar(
-        title: const Text('もり - 練習モード'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-      ),
+      appBar: AppBar(title: const Text('もり - 正式ルール練習'), backgroundColor: Colors.transparent, elevation: 0),
       body: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -141,32 +174,37 @@ class _GamePageState extends State<GamePage> {
                   child: Container(
                     width: 70, height: 100,
                     decoration: BoxDecoration(
-                      color: Colors.blueGrey[800],
+                      color: isInitialPhase ? Colors.grey : Colors.blueGrey[900],
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: const Center(
-                      child: Text('山札', style: TextStyle(color: Colors.white))),
+                    child: Center(child: Text(isInitialPhase ? '待機中' : 'ドロー', style: const TextStyle(color: Colors.white))),
                   ),
                 ),
-                Text('残り: ${deck.length}枚', style: const TextStyle(color: Colors.white)),
+                Text('残り: ${deck.length}枚', style: const TextStyle(color: Colors.white70)),
               ],
             ),
           ),
 
-          // 場札
+          // 中央：場
           Column(
             children: [
-              const Text('場のカード', style: TextStyle(color: Colors.white70)),
+              Text(isInitialPhase ? '初期札を選定中...' : '場のカード', 
+                style: TextStyle(color: isInitialPhase ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               CardWidget(
                 card: CardModel(suit: fieldSuit, number: fieldNumber),
                 onTap: () {},
               ),
+              if (isInitialPhase) 
+                const Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: CircularProgressIndicator(color: Colors.orange, strokeWidth: 2),
+                ),
             ],
           ),
 
-          // 手札とボタン
+          // 下部
           Container(
             padding: const EdgeInsets.only(bottom: 30),
             child: Column(
@@ -179,18 +217,22 @@ class _GamePageState extends State<GamePage> {
                     padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 15),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
                   ),
-                  child: const Text('もり！', style: TextStyle(fontSize: 24)),
+                  child: const Text('もり！', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(height: 20),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: myHand.map((card) => CardWidget(
-                      card: card,
-                      onTap: () => _playCard(card),
-                    )).toList(),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Row(
+                      children: myHand.map((card) => Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: CardWidget(card: card, onTap: () => _playCard(card)),
+                      )).toList(),
+                    ),
                   ),
                 ),
+                Text('手札: ${myHand.length} / 7枚', style: const TextStyle(color: Colors.white70)),
               ],
             ),
           ),
