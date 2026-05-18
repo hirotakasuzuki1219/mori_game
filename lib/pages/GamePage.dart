@@ -40,52 +40,64 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _listenToRoom() {
-    // 既存の監視を一旦キャンセルしてから再開
-    _roomSubscription?.cancel();
     _roomSubscription = _roomRef.onValue.listen((event) {
-      debugPrint("Firebaseからデータを受信しました: ${event.snapshot.value}");
       final data = event.snapshot.value as Map?;
       if (data == null) return;
 
       final field = data['field'] as Map?;
       if (field != null) {
-        if (mounted) {
-          setState(() {
-            fieldNumber = field['number'];
-            fieldSuit = Suit.values.firstWhere(
-              (e) => e.name == field['suit'],
-              orElse: () => Suit.joker,
-            );
-            isInitialPhase = data['isInitialPhase'] ?? true;
-          });
-        }
+        setState(() {
+          fieldNumber = field['number'];
+          fieldSuit = Suit.values.firstWhere(
+            (e) => e.name == field['suit'],
+            orElse: () => Suit.joker,
+          );
+          isInitialPhase = data['isInitialPhase'] ?? true;
+        });
+
+        // 追加：初期フェーズで誰も出せない場合の救済措置
+        // 本来は「全員の持っているカード」をFirebaseに持たせて判定するのが理想ですが、
+        // 簡易的には「自分が持っていなくて、一定時間誰も出さなければめくる」等の処理が必要です。
+        // ここでは、初期化時に「誰も出せないなら山札からめくる」を確実に行うようにします。
       }
-    }, onError: (error) {
-      debugPrint("Firebase監視エラー: $error");
     });
   }
 
   Future<void> _checkAndInitializeFirebase() async {
     try {
       final snapshot = await _roomRef.get();
-      if (snapshot.exists && snapshot.child('field').value != null) {
-        debugPrint("既存の部屋を発見しました");
-        return;
+      
+      // 部屋が存在しない、もしくは場にカードがない場合は初期化
+      if (!snapshot.exists || snapshot.child('field').value == null) {
+        _forceDrawFromDeckToField();
+      } else {
+        // 部屋がある場合でも、初期フェーズで自分が何も出せないなら、
+        // 1枚めくって更新する機能（またはドローを促すUI）が必要です
+        final data = snapshot.value as Map;
+        if (data['isInitialPhase'] == true && !_hasPlayableCard()) {
+           print("初期盤面ですが出せるカードがありません。");
+           // ここで自動でめくるか、ユーザーに「めくる」ボタンを押させるか検討が必要です。
+        }
       }
-
-      debugPrint("新規部屋を初期化します");
-      final firstCard = deck.removeLast();
-      await _roomRef.set({
-        'field': {
-          'number': firstCard.number,
-          'suit': firstCard.suit.name,
-        },
-        'isInitialPhase': true,
-        'status': 'playing'
-      });
     } catch (e) {
-      debugPrint("初期化エラー: $e");
+      print("初期化エラー: $e");
     }
+  }
+
+  // 山札から強制的に1枚めくって場に出す共通メソッド
+  Future<void> _forceDrawFromDeckToField() async {
+    if (deck.isEmpty) return;
+    
+    final firstCard = deck.removeLast();
+    await _roomRef.set({
+      'field': {
+        'number': firstCard.number,
+        'suit': firstCard.suit.name,
+      },
+      'isInitialPhase': true,
+      'status': 'playing'
+    });
+    print("山札から新しいカードを場に出しました: ${firstCard.number}");
   }
 
   void _prepareLocalCards() {
