@@ -1,5 +1,3 @@
-// lib/models/CardModel.dart
-
 enum Suit { spade, heart, diamond, club, joker }
 
 class CardModel {
