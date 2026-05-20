@@ -9,7 +9,7 @@ class GameBoardView extends StatelessWidget {
   final int fieldNumber;
   final Suit fieldSuit;
   final VoidCallback onDraw;
-  final VoidCallback onFlip;
+  final VoidCallback onFlip; // これが初期盤面をめくる関数
 
   const GameBoardView({
     super.key,
@@ -29,11 +29,14 @@ class GameBoardView extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // ドローボタン（初期フェーズ以外で、自分の番のとき活性化）
             _ActionButton(
               label: 'ドロー',
-              onTap: isMyTurn && !isInitialPhase ? onDraw : null,
-              isActive: isMyTurn && !isInitialPhase,
+              onTap: (!isInitialPhase && isMyTurn) ? onDraw : null,
+              isActive: !isInitialPhase && isMyTurn,
             ),
+            
+            // --- 【ここが重要】初期めくりボタン ---
             if (isInitialPhase && isHost) ...[
               const SizedBox(width: 20),
               _ActionButton(
@@ -47,8 +50,10 @@ class GameBoardView extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 20),
-        Text('場: ${fieldSuit.name} $fieldNumber', 
-          style: const TextStyle(color: Colors.yellow, fontSize: 20, fontWeight: FontWeight.bold)),
+        Text(
+          isInitialPhase ? '【初期】数字を合わせろ' : '場: ${fieldSuit.name} $fieldNumber',
+          style: const TextStyle(color: Colors.yellow, fontSize: 20, fontWeight: FontWeight.bold),
+        ),
         const SizedBox(height: 10),
         CardWidget(card: CardModel(suit: fieldSuit, number: fieldNumber), onTap: () {}),
       ],
@@ -56,6 +61,7 @@ class GameBoardView extends StatelessWidget {
   }
 }
 
+// 内部で使うボタン用ウィジェット（同じファイル内に置いてOK）
 class _ActionButton extends StatelessWidget {
   final String label;
   final VoidCallback? onTap;
