@@ -30,6 +30,7 @@ class _GamePageState extends State<GamePage> {
   bool isInitializing = true;
   int currentTurnIndex = 0;
   bool isDrawCompetitive = false; 
+  String? lastPlayerId; // 誰が場札を出したか
 
   @override
   void initState() {
@@ -45,17 +46,15 @@ class _GamePageState extends State<GamePage> {
     super.dispose();
   }
 
-  // --- 初期化: プレイヤーリストの整合性を保ちつつ入室 ---
+  // --- 初期化ロジック ---
   Future<void> _initializeGame() async {
     setState(() => isInitializing = true);
     await Future.delayed(const Duration(milliseconds: 1000));
-    
     final snapshot = await _roomRef.get();
     
-    List<String> currentPlayers = [];
-    if (snapshot.child('players').exists) {
-      currentPlayers = List<String>.from(snapshot.child('players').value as List);
-    }
+    List<String> currentPlayers = snapshot.child('players').exists 
+        ? List<String>.from(snapshot.child('players').value as List) 
+        : [];
     
     if (!currentPlayers.contains(myId)) {
       currentPlayers.add(myId);
@@ -85,6 +84,7 @@ class _GamePageState extends State<GamePage> {
       'isInitialPhase': true,
       'currentTurnIndex': 0,
       'isDrawCompetitive': false,
+      'lastPlayerId': 'system', // 初期状態はシステム
     });
 
     setState(() {
@@ -126,6 +126,7 @@ class _GamePageState extends State<GamePage> {
           playerIds = List<String>.from(data['players'] ?? []);
           currentTurnIndex = (data['currentTurnIndex'] as num? ?? 0).toInt();
           isDrawCompetitive = data['isDrawCompetitive'] ?? false;
+          lastPlayerId = data['lastPlayerId']?.toString();
           
           if (data['deck'] != null) {
             firebaseDeck = (data['deck'] as List).map((item) {
@@ -147,18 +148,53 @@ class _GamePageState extends State<GamePage> {
     });
   }
 
-  // --- ターン・割り込み判定ロジック ---
+  // --- もりの判定ロジック ---
+  bool _canMori() {
+    // 初期フェーズや場が空の時は不可
+    if (isInitialPhase || fieldNumber == -1) return false;
+    
+    // 【重要】自分が出したカードに対しては「もり」できない（相手に刺すため）
+    if (lastPlayerId == myId || lastPlayerId == 'system') return false;
+
+    // 手札が2枚の時：四則演算で場の数字を作る
+    if (myHand.length == 2) {
+      int a = myHand[0].number;
+      int b = myHand[1].number;
+      return (a + b == fieldNumber) ||
+             (a - b == fieldNumber) ||
+             (b - a == fieldNumber) ||
+             (a * b == fieldNumber) ||
+             (b != 0 && a % b == 0 && a ~/ b == fieldNumber) ||
+             (a != 0 && b % a == 0 && b ~/ a == fieldNumber);
+    }
+
+    // 手札が1枚の時：相手が出した数字と自分の手札が一致
+    if (myHand.length == 1) {
+      return myHand[0].number == fieldNumber;
+    }
+
+    return false;
+  }
+
+  void _declareMori() {
+    if (!_canMori()) return;
+    
+    // 勝利ダイアログ
+    _showResultDialog(
+      "もり！！！", 
+      "あなたの勝利です！\n敗者: $lastPlayerId さん"
+    );
+  }
+
+  // --- 通常のカードプレイロジック ---
   bool _canIPlay(CardModel card) {
     if (isInitialPhase) return card.number == fieldNumber;
-
-    // 1. 同じ数字はいつでも割り込みOK (早い者勝ち)
     if (card.number == fieldNumber) return true;
 
     int myIndex = playerIds.indexOf(myId);
     if (myIndex == -1) return false;
     int officialTurnIndex = currentTurnIndex % playerIds.length;
     
-    // 2. ドロー後の早い者勝ち
     if (isDrawCompetitive) {
       int drawerIndex = (currentTurnIndex - 1 + playerIds.length) % playerIds.length;
       if (myIndex == drawerIndex || myIndex == officialTurnIndex) {
@@ -167,9 +203,7 @@ class _GamePageState extends State<GamePage> {
       return false;
     }
 
-    // 3. 通常ターン
     if (myIndex == officialTurnIndex && card.suit == fieldSuit) return true;
-
     return false;
   }
 
@@ -184,14 +218,12 @@ class _GamePageState extends State<GamePage> {
 
     setState(() => myHand.remove(card));
 
-    // 次のターンは、誰がどのような形で出したとしても「出した人の次」に回す
-    int nextTurnIndex = (myIndex + 1) % playerIds.length;
-
     _roomRef.update({
       'field': {'number': card.number, 'suit': card.suit.name},
       'isInitialPhase': false,
-      'currentTurnIndex': nextTurnIndex,
+      'currentTurnIndex': (myIndex + 1) % playerIds.length,
       'isDrawCompetitive': false,
+      'lastPlayerId': myId, // 出した人を記録
     });
   }
 
@@ -210,7 +242,6 @@ class _GamePageState extends State<GamePage> {
 
       setState(() => myHand.add(drawnCard));
       
-      // ドロー後は「次の人」に公式ターンを渡し、競争モードをONにする
       await _roomRef.update({
         'deck': deckData,
         'currentTurnIndex': (currentTurnIndex + 1) % playerIds.length,
@@ -239,15 +270,9 @@ class _GamePageState extends State<GamePage> {
       await _roomRef.update({
         'field': {'number': nextCard.number, 'suit': nextCard.suit.name},
         'deck': firebaseDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
+        'lastPlayerId': 'system',
       });
     }
-  }
-
-  bool _canMori() {
-    if (isInitialPhase || fieldNumber == -1) return false;
-    if (myHand.length == 2) return MoriLogic.checkNormalMori(fieldNumber, myHand) || MoriLogic.checkSpecialMori(fieldNumber, myHand);
-    if (myHand.length == 1) return myHand[0].number == fieldNumber;
-    return false;
   }
 
   void _showErrorSnackBar(String msg) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), duration: const Duration(milliseconds: 500)));
@@ -268,18 +293,8 @@ class _GamePageState extends State<GamePage> {
     }
 
     int myIndex = playerIds.indexOf(myId);
-    int officialTurnIndex = currentTurnIndex % playerIds.length;
-    bool isMyTurn = (officialTurnIndex == myIndex);
-    
-    // 自分がドローした本人かどうか
-    bool iAmDrawer = false;
-    if (isDrawCompetitive) {
-      int drawerIndex = (currentTurnIndex - 1 + playerIds.length) % playerIds.length;
-      if (myId == playerIds[drawerIndex]) iAmDrawer = true;
-    }
-
-    String turnText = isMyTurn ? "あなたの番です" : "待機中...";
-    if (isDrawCompetitive) turnText = (isMyTurn || iAmDrawer) ? "ドロー競争中！" : "相手がドローしました";
+    bool isMyTurn = (currentTurnIndex % playerIds.length == myIndex);
+    bool iAmDrawer = isDrawCompetitive && playerIds[(currentTurnIndex - 1 + playerIds.length) % playerIds.length] == myId;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
@@ -293,39 +308,44 @@ class _GamePageState extends State<GamePage> {
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Text(turnText, style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold, fontSize: 18)),
+            child: Text(isMyTurn || iAmDrawer ? "あなたの番 / 競争中" : "相手の番です", 
+              style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold)),
           ),
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: GestureDetector(
-              onTap: isMyTurn ? _drawCard : null,
-              child: Container(
-                width: 70, height: 100,
-                decoration: BoxDecoration(
-                  color: !isMyTurn || isInitialPhase ? Colors.grey : Colors.blueGrey[900],
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.white, width: 2),
-                ),
-                child: const Center(child: Text('ドロー', style: TextStyle(color: Colors.white))),
+          // ドローボタン
+          GestureDetector(
+            onTap: isMyTurn ? _drawCard : null,
+            child: Container(
+              width: 70, height: 100,
+              decoration: BoxDecoration(
+                color: !isMyTurn || isInitialPhase ? Colors.grey : Colors.blueGrey[900],
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white, width: 2),
               ),
+              child: const Center(child: Text('ドロー', style: TextStyle(color: Colors.white))),
             ),
           ),
+          // 場
           Column(
             children: [
-              Text(isInitialPhase ? '【初期】数字を合わせろ' : '場: ${fieldSuit.name} $fieldNumber', 
-                style: const TextStyle(color: Colors.yellow, fontWeight: FontWeight.bold)),
+              Text('場: ${fieldSuit.name} $fieldNumber', style: const TextStyle(color: Colors.yellow)),
               const SizedBox(height: 10),
               CardWidget(card: CardModel(suit: fieldSuit, number: fieldNumber), onTap: () {}),
             ],
           ),
+          // 下部操作エリア
           Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: Column(
               children: [
+                // 【重要】もりボタン
                 ElevatedButton(
-                  onPressed: _canMori() ? () => _showResultDialog("もり！", "上がりです！") : null,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
-                  child: const Text('もり！'),
+                  onPressed: _canMori() ? _declareMori : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orangeAccent,
+                    disabledBackgroundColor: Colors.grey.withAlpha(50),
+                    padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                  ),
+                  child: const Text('もり！', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(height: 20),
                 SingleChildScrollView(
