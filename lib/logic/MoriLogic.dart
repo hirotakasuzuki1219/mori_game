@@ -1,28 +1,41 @@
-import 'package:mori_game/models/CardModel.dart'; 
+import 'package:mori_game/models/CardModel.dart';
 
 class MoriLogic {
-  // 通常の「もり」判定（合計値）
-  static bool checkNormalMori(int fieldNum, List<CardModel> hand) {
-    final validCards = hand.where((c) => c.suit != Suit.joker).toList();
-    if (validCards.isEmpty) return false;
+  /// もり判定のメインロジック
+  static bool canMori({
+    required int fieldNumber,
+    required List<CardModel> hand,
+    required String? lastPlayerId,
+    required String myId,
+    required bool isInitialPhase,
+  }) {
+    // 自分が直前に出した場合や、初期フェーズ、システムが場を出した直後は「もり」不可
+    if (isInitialPhase || fieldNumber == -1 || lastPlayerId == myId || lastPlayerId == 'system') {
+      return false;
+    }
+
+    // 手札が2枚の時：四則演算のいずれかで場の数字と一致するか
+    if (hand.length == 2) {
+      int a = hand[0].number;
+      int b = hand[1].number;
+      return _checkFourOperations(fieldNumber, a, b);
+    }
     
-    int sum = validCards.fold(0, (prev, c) => prev + c.number);
-    return sum == fieldNum;
+    // 手札が1枚の時：相手が出した数字と自分の手札が一致
+    if (hand.length == 1) {
+      return hand[0].number == fieldNumber;
+    }
+
+    return false;
   }
 
-  // 特殊ルール（2枚時の四則演算）
-  static bool checkSpecialMori(int fieldNum, List<CardModel> hand) {
-    final validCards = hand.where((c) => c.suit != Suit.joker).toList();
-    if (validCards.length != 2) return false;
-
-    int a = validCards[0].number;
-    int b = validCards[1].number;
-
-    return (a + b == fieldNum) ||
-           (a - b == fieldNum) ||
-           (b - a == fieldNum) ||
-           (a * b == fieldNum) ||
-           (b != 0 && a % b == 0 && a ~/ b == fieldNum) ||
-           (a != 0 && b % a == 0 && b ~/ a == fieldNum);
+  /// 四則演算（＋−×÷）の全パターンチェック
+  static bool _checkFourOperations(int target, int a, int b) {
+    return (a + b == target) ||
+           (a - b == target) ||
+           (b - a == target) ||
+           (a * b == target) ||
+           (b != 0 && a % b == 0 && a ~/ b == target) ||
+           (a != 0 && b % a == 0 && b ~/ a == target);
   }
 }
