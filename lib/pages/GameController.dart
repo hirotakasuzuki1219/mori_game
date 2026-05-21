@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:mori_game/models/CardModel.dart';
 import 'package:mori_game/widgets/GameView.dart';
-import 'package:mori_game/widgets/others_status_view.dart';
 import 'dart:async';
 
 class GameController extends StatefulWidget {
@@ -16,7 +15,6 @@ class _GameControllerState extends State<GameController> {
   final DatabaseReference _roomRef = FirebaseDatabase.instance.ref('rooms/test_room');
   StreamSubscription<DatabaseEvent>? _roomSubscription;
 
-  // --- 状態変数（司令塔が管理するデータ） ---
   late String myId;
   String? hostId;
   List<CardModel> firebaseDeck = []; 
@@ -94,7 +92,6 @@ class _GameControllerState extends State<GameController> {
       'isDrawCompetitive': false,
       'lastPlayerId': 'system',
     });
-
     setState(() { myHand = initialHand; firebaseDeck = fullDeck; });
   }
 
@@ -148,8 +145,6 @@ class _GameControllerState extends State<GameController> {
     });
   }
 
-  // --- アクション (UI側から呼び出される) ---
-
   void _playCard(CardModel card) async {
     int myIndex = playerIds.indexOf(myId);
     setState(() => myHand.remove(card));
@@ -201,8 +196,6 @@ class _GameControllerState extends State<GameController> {
     return deck;
   }
 
-  // --- 描画 (GameViewに全てのデータを渡す) ---
-
   @override
   Widget build(BuildContext context) {
     if (isInitializing || fieldNumber == -1 || (myHand.isEmpty && isInitialPhase)) {
@@ -220,27 +213,25 @@ class _GameControllerState extends State<GameController> {
         backgroundColor: Colors.transparent,
         actions: [Center(child: Padding(padding: const EdgeInsets.only(right: 16), child: Text('山札: ${firebaseDeck.length}')))],
       ),
-      body: Column(
-        children: [
-          OthersStatusView(playerIds: playerIds, myId: myId, handCounts: handCounts, currentTurnIndex: currentTurnIndex),
-          Expanded(
-            child: GameView(
-              fieldNumber: fieldNumber,
-              fieldSuit: fieldSuit,
-              myHand: myHand,
-              myId: myId,
-              lastPlayerId: lastPlayerId,
-              isInitialPhase: isInitialPhase,
-              isMyTurn: isMyTurn,
-              isHost: isHost,
-              iAmDrawer: iAmDrawer,
-              onPlay: _playCard,
-              onDraw: _drawCard,
-              onFlip: _drawNextInitialCard,
-              onMori: () => _showResultDialog("もり！！！", "勝利！敗者: $lastPlayerId さん"),
-            ),
-          ),
-        ],
+      body: SafeArea(
+        child: GameView(
+          fieldNumber: fieldNumber,
+          fieldSuit: fieldSuit,
+          myHand: myHand,
+          playerIds: playerIds,
+          myId: myId,
+          handCounts: handCounts,
+          currentTurnIndex: currentTurnIndex,
+          lastPlayerId: lastPlayerId,
+          isInitialPhase: isInitialPhase,
+          isMyTurn: isMyTurn,
+          isHost: isHost,
+          iAmDrawer: iAmDrawer,
+          onPlay: _playCard,
+          onDraw: _drawCard,
+          onFlip: _drawNextInitialCard,
+          onMori: () => _showResultDialog("もり！！！", "勝利！ 敗者: $lastPlayerId さん"),
+        ),
       ),
     );
   }

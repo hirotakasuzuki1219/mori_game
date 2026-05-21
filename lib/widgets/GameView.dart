@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:mori_game/models/CardModel.dart';
-import 'package:mori_game/widgets/CardWidget.dart';
 import 'package:mori_game/logic/MoriLogic.dart';
 
 class GameView extends StatelessWidget {
   final int fieldNumber;
   final Suit fieldSuit;
   final List<CardModel> myHand;
+  final List<String> playerIds;
   final String myId;
+  final Map<String, int> handCounts;
+  final int currentTurnIndex;
   final String? lastPlayerId;
   final bool isInitialPhase;
   final bool isMyTurn;
   final bool isHost;
   final bool iAmDrawer;
   
-  // アクション用コールバック
   final Function(CardModel) onPlay;
   final VoidCallback onDraw;
   final VoidCallback onFlip;
@@ -25,7 +26,10 @@ class GameView extends StatelessWidget {
     required this.fieldNumber,
     required this.fieldSuit,
     required this.myHand,
+    required this.playerIds,
     required this.myId,
+    required this.handCounts,
+    required this.currentTurnIndex,
     required this.lastPlayerId,
     required this.isInitialPhase,
     required this.isMyTurn,
@@ -39,7 +43,7 @@ class GameView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ロジック層に判定を依頼
+    // 判定はロジック層へ
     bool canMoriNow = MoriLogic.canMori(
       fieldNumber: fieldNumber,
       hand: myHand,
@@ -48,21 +52,15 @@ class GameView extends StatelessWidget {
       isInitialPhase: isInitialPhase,
     );
 
-    String turnStatusText = isInitialPhase 
-        ? "【初期】数字を合わせて開始！" 
-        : (isMyTurn || iAmDrawer ? "あなたの番 / 競争中" : "相手の番です");
-
     return Column(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        // 状態テキスト
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Text(turnStatusText, 
-            style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold)),
+        _buildOthersStatus(),
+        const Spacer(),
+        Text(
+          isInitialPhase ? "【初期】数字を合わせろ" : (isMyTurn || iAmDrawer ? "あなたの番 / 競争中" : "相手の番です"),
+          style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold, fontSize: 16),
         ),
-
-        // 盤面中央（ドロー・めくる・場札）
+        const SizedBox(height: 15),
         Column(
           children: [
             Row(
@@ -76,44 +74,67 @@ class GameView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-            Text('場: ${fieldSuit.name} $fieldNumber', 
-              style: const TextStyle(color: Colors.yellow, fontSize: 22, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            CardWidget(card: CardModel(suit: fieldSuit, number: fieldNumber), onTap: () {}),
+            CardModel(suit: fieldSuit, number: fieldNumber),
           ],
         ),
-
-        // 下部（もりボタン・手札）
-        Padding(
-          padding: const EdgeInsets.only(bottom: 20),
-          child: Column(
-            children: [
-              ElevatedButton(
-                onPressed: canMoriNow ? onMori : null,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orangeAccent,
-                  disabledBackgroundColor: Colors.grey.withAlpha(50),
-                  padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15),
+        const Spacer(),
+        ElevatedButton(
+          onPressed: canMoriNow ? onMori : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orangeAccent,
+            disabledBackgroundColor: Colors.grey.withAlpha(50),
+            padding: const EdgeInsets.symmetric(horizontal: 60, vertical: 18),
+          ),
+          child: const Text('もり！', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 30),
+        Container(
+          padding: const EdgeInsets.only(bottom: 30),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: myHand.map((c) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: CardModel(
+                  suit: c.suit,
+                  number: c.number,
+                  onTap: () => onPlay(c),
                 ),
-                child: const Text('もり！', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(height: 20),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: myHand.map((c) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: CardWidget(card: c, onTap: () => onPlay(c)),
-                  )).toList(),
-                ),
-              ),
-              const SizedBox(height: 5),
-              Text('手札: ${myHand.length}/7', style: const TextStyle(color: Colors.white70)),
-            ],
+              )).toList(),
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildOthersStatus() {
+    final others = playerIds.where((id) => id != myId).toList();
+    final activePlayerId = playerIds.isNotEmpty ? playerIds[currentTurnIndex % playerIds.length] : "";
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: others.map((id) {
+          bool isHisTurn = (id == activePlayerId);
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Column(
+              children: [
+                CircleAvatar(
+                  backgroundColor: isHisTurn ? Colors.orange : Colors.grey[800],
+                  radius: 20,
+                  child: Icon(Icons.person, color: isHisTurn ? Colors.white : Colors.white54),
+                ),
+                const SizedBox(height: 4),
+                Text('${handCounts[id] ?? 0} 枚', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -121,17 +142,17 @@ class GameView extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 70, height: 100,
+        width: 75, height: 105,
         decoration: BoxDecoration(
           color: onTap != null ? (color ?? Colors.blueGrey[900]) : Colors.grey,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(color: Colors.white, width: 2),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (icon != null) Icon(icon, color: Colors.white, size: 20),
-            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            if (icon != null) Icon(icon, color: Colors.white, size: 22),
+            Text(label, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
           ],
         ),
       ),
