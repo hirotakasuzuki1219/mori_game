@@ -5,17 +5,18 @@ import 'package:mori_game/widgets/GameView.dart';
 import 'package:mori_game/widgets/others_status_view.dart';
 import 'dart:async';
 
-class GamePage extends StatefulWidget {
-  const GamePage({super.key});
+class GameController extends StatefulWidget {
+  const GameController({super.key});
+
   @override
-  State<GamePage> createState() => _GamePageState();
+  State<GameController> createState() => _GameControllerState();
 }
 
-class _GamePageState extends State<GamePage> {
+class _GameControllerState extends State<GameController> {
   final DatabaseReference _roomRef = FirebaseDatabase.instance.ref('rooms/test_room');
   StreamSubscription<DatabaseEvent>? _roomSubscription;
 
-  // 司令塔が保持するゲームデータ
+  // --- 状態変数（司令塔が管理するデータ） ---
   late String myId;
   String? hostId;
   List<CardModel> firebaseDeck = []; 
@@ -46,7 +47,7 @@ class _GamePageState extends State<GamePage> {
     super.dispose();
   }
 
-  // --- Firebase 通信ロジック ---
+  // --- Firebase 同期ロジック ---
 
   Future<void> _syncMyHandCount() async {
     await _roomRef.child('playerHands').update({myId: myHand.length});
@@ -147,6 +148,8 @@ class _GamePageState extends State<GamePage> {
     });
   }
 
+  // --- アクション (UI側から呼び出される) ---
+
   void _playCard(CardModel card) async {
     int myIndex = playerIds.indexOf(myId);
     setState(() => myHand.remove(card));
@@ -198,7 +201,7 @@ class _GamePageState extends State<GamePage> {
     return deck;
   }
 
-  // --- メイン描画エリア ---
+  // --- 描画 (GameViewに全てのデータを渡す) ---
 
   @override
   Widget build(BuildContext context) {
@@ -219,10 +222,7 @@ class _GamePageState extends State<GamePage> {
       ),
       body: Column(
         children: [
-          // 相手のステータス
           OthersStatusView(playerIds: playerIds, myId: myId, handCounts: handCounts, currentTurnIndex: currentTurnIndex),
-          
-          // 統合されたゲーム盤面UI
           Expanded(
             child: GameView(
               fieldNumber: fieldNumber,
