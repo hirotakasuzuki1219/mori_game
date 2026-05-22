@@ -23,7 +23,7 @@ class _GameControllerState extends State<GameController> {
   List<CardModel> myHand = [];
   List<String> playerIds = [];
   Map<String, int> handCounts = {};
-  int fieldNumber = -1;
+  int fieldNumber = -1; // ここが-1のときは非表示
   Suit fieldSuit = Suit.joker;
   bool isInitialPhase = true;
   bool isInitializing = true;
@@ -77,6 +77,12 @@ class _GameControllerState extends State<GameController> {
     setState(() => isInitializing = true);
     final snapshot = await _db.getRoomSnapshot();
     
+    if (snapshot.exists && snapshot.child('gameStarted').value == true) {
+      if (!mounted) return;
+      _showErrorAndExit("この部屋のゲームは既に開始されています。");
+      return;
+    }
+
     if (!snapshot.exists || snapshot.child('host').value == null) {
       await _setupNewRoom();
     } else {
@@ -85,12 +91,29 @@ class _GameControllerState extends State<GameController> {
     setState(() => isInitializing = false);
   }
 
+  void _showErrorAndExit(String message) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text("入室エラー"),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).popUntil((route) => route.isFirst),
+            child: const Text("戻る"),
+          )
+        ],
+      ),
+    );
+  }
+
   Future<void> _setupNewRoom() async {
     List<CardModel> deck = _generateFullDeck()..shuffle();
     final hand = deck.sublist(0, 5);
     deck.removeRange(0, 5);
-    final first = deck.removeLast();
-    await _db.setupRoom(myId, deck, first);
+    // 最初の一枚を場に出さず、山札に保持したまま作成
+    await _db.setupRoom(myId, deck);
     setState(() { myHand = hand; });
   }
 
@@ -114,6 +137,7 @@ class _GameControllerState extends State<GameController> {
   }
 
   void _playCard(CardModel card) async {
+    if (fieldNumber == -1) return; // 開始前は出せない
     int nextIdx = (playerIds.indexOf(myId) + 1) % playerIds.length;
     setState(() => myHand.remove(card));
     await _db.playCard(nextTurnIndex: nextIdx, card: card, myId: myId);
@@ -121,7 +145,7 @@ class _GameControllerState extends State<GameController> {
   }
 
   Future<void> _drawCard() async {
-    if (firebaseDeck.isEmpty) return;
+    if (firebaseDeck.isEmpty || fieldNumber == -1) return;
     final nextDeck = firebaseDeck.sublist(0, firebaseDeck.length - 1);
     final drawn = firebaseDeck.last;
     setState(() => myHand.add(drawn));
@@ -129,13 +153,22 @@ class _GameControllerState extends State<GameController> {
       remainingDeck: nextDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
       nextTurnIndex: (currentTurnIndex + 1) % playerIds.length,
     );
-    await _db.syncHandCount(myId, myHand.length);
+    await _syncMyHandCount();
   }
 
   Future<void> _flipInitial() async {
     if (firebaseDeck.isEmpty) return;
+    
+    if (fieldNumber == -1) {
+      await _db.startGame();
+    }
+
     final next = firebaseDeck.removeLast();
     await _db.flipCard(firebaseDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(), next);
+  }
+
+  Future<void> _syncMyHandCount() async {
+    await _db.syncHandCount(myId, myHand.length);
   }
 
   List<CardModel> _generateFullDeck() {
@@ -149,7 +182,7 @@ class _GameControllerState extends State<GameController> {
 
   @override
   Widget build(BuildContext context) {
-    if (isInitializing || fieldNumber == -1) {
+    if (isInitializing) {
       return const Scaffold(backgroundColor: Color(0xFF1B5E20), body: Center(child: CircularProgressIndicator(color: Colors.white)));
     }
 

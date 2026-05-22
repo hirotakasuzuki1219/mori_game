@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:math';
+import 'package:mori_game/services/FirebaseService.dart';
 import 'GameController.dart';
 
 class EntrancePage extends StatefulWidget {
@@ -17,8 +18,22 @@ class _EntrancePageState extends State<EntrancePage> {
     _joinRoom(newRoomId);
   }
 
-  void _joinRoom(String roomId) {
+  void _joinRoom(String roomId) async {
     if (roomId.isEmpty) return;
+
+    // 入室前に開始フラグをチェック
+    final db = FirebaseService(roomId);
+    final snapshot = await db.getRoomSnapshot();
+    
+    if (snapshot.exists && snapshot.child('gameStarted').value == true) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('その部屋は既にゲームが開始されています')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(builder: (context) => GameController(roomId: roomId)),

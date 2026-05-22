@@ -11,18 +11,23 @@ class FirebaseService {
 
   Stream<DatabaseEvent> get roomStream => _roomRef.onValue;
 
-  Future<void> setupRoom(String myId, List<CardModel> deck, CardModel firstCard) async {
+  Future<void> setupRoom(String myId, List<CardModel> deck) async {
     await _roomRef.set({
       'host': myId,
       'players': [myId],
       'playerHands': {myId: 5},
       'deck': deck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
-      'field': {'number': firstCard.number, 'suit': firstCard.suit.name},
+      'field': {'number': -1, 'suit': 'joker'}, // 初期値
       'isInitialPhase': true,
       'currentTurnIndex': 0,
       'isDrawCompetitive': false,
       'lastPlayerId': 'system',
+      'gameStarted': false,
     });
+  }
+
+  Future<void> startGame() async {
+    await _roomRef.update({'gameStarted': true});
   }
 
   Future<void> updatePlayers(List<String> players) async {

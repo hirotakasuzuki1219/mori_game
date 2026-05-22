@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:mori_game/pages/EntrancePage.dart';
-import 'firebase_options.dart'; // Make sure this file exists after FlutterFire setup
+import 'firebase_options.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
