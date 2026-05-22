@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
 import 'package:mori_game/models/CardModel.dart';
+import 'package:mori_game/services/FirebaseService.dart';
 import 'package:mori_game/widgets/GameView.dart';
 import 'dart:async';
+import 'package:firebase_database/firebase_database.dart';
 
 class GameController extends StatefulWidget {
   const GameController({super.key});
@@ -12,13 +13,14 @@ class GameController extends StatefulWidget {
 }
 
 class _GameControllerState extends State<GameController> {
-  final DatabaseReference _roomRef = FirebaseDatabase.instance.ref('rooms/test_room');
-  StreamSubscription<DatabaseEvent>? _roomSubscription;
+  final FirebaseService _db = FirebaseService();
+  StreamSubscription<DatabaseEvent>? _subscription;
 
+  // 状態データ
   late String myId;
   String? hostId;
-  List<CardModel> firebaseDeck = []; 
-  List<CardModel> myHand = []; 
+  List<CardModel> firebaseDeck = [];
+  List<CardModel> myHand = [];
   List<String> playerIds = [];
   Map<String, int> handCounts = {};
   int fieldNumber = -1;
@@ -26,10 +28,8 @@ class _GameControllerState extends State<GameController> {
   bool isInitialPhase = true;
   bool isInitializing = true;
   int currentTurnIndex = 0;
-  bool isDrawCompetitive = false; 
+  bool isDrawCompetitive = false;
   String? lastPlayerId;
-
-  bool get isHost => myId == hostId;
 
   @override
   void initState() {
@@ -41,30 +41,47 @@ class _GameControllerState extends State<GameController> {
 
   @override
   void dispose() {
-    _roomSubscription?.cancel();
+    _subscription?.cancel();
     super.dispose();
   }
 
-  // --- Firebase 同期ロジック ---
-
-  Future<void> _syncMyHandCount() async {
-    await _roomRef.child('playerHands').update({myId: myHand.length});
+  void _listenToRoom() {
+    _subscription = _db.roomStream.listen((event) {
+      final data = event.snapshot.value as Map?;
+      if (data == null || !mounted) return;
+      setState(() {
+        hostId = data['host']?.toString();
+        playerIds = List<String>.from(data['players'] ?? []);
+        currentTurnIndex = (data['currentTurnIndex'] as num? ?? 0).toInt();
+        isDrawCompetitive = data['isDrawCompetitive'] ?? false;
+        lastPlayerId = data['lastPlayerId']?.toString();
+        if (data['playerHands'] != null) handCounts = Map<String, int>.from(data['playerHands']);
+        if (data['deck'] != null) {
+          firebaseDeck = (data['deck'] as List).map((i) => CardModel(
+            number: (i['number'] as num).toInt(),
+            suit: Suit.values.firstWhere((e) => e.name == i['suit']),
+          )).toList();
+        }
+        final field = data['field'] as Map?;
+        if (field != null) {
+          fieldNumber = (field['number'] as num).toInt();
+          fieldSuit = Suit.values.firstWhere((e) => e.name == field['suit']);
+          isInitialPhase = data['isInitialPhase'] ?? true;
+        }
+      });
+    });
   }
 
   Future<void> _initializeGame() async {
     setState(() => isInitializing = true);
-    await Future.delayed(const Duration(milliseconds: 1000));
-    final snapshot = await _roomRef.get();
+    final snapshot = await _db.getRoomSnapshot();
     
-    List<String> currentPlayers = snapshot.child('players').exists 
-        ? List<String>.from(snapshot.child('players').value as List) 
-        : [];
-    
-    if (!currentPlayers.contains(myId)) {
-      currentPlayers.add(myId);
-      await _roomRef.child('players').set(currentPlayers);
+    List<String> players = snapshot.child('players').exists 
+        ? List<String>.from(snapshot.child('players').value as List) : [];
+    if (!players.contains(myId)) {
+      players.add(myId);
+      await _db.updatePlayers(players);
     }
-    await _syncMyHandCount();
 
     if (!snapshot.exists || snapshot.child('host').value == null) {
       await _setupNewRoom();
@@ -75,171 +92,90 @@ class _GameControllerState extends State<GameController> {
   }
 
   Future<void> _setupNewRoom() async {
-    List<CardModel> fullDeck = _generateFullDeck();
-    fullDeck.shuffle();
-    final initialHand = fullDeck.sublist(0, 5);
-    fullDeck.removeRange(0, 5);
-    final firstCard = fullDeck.removeLast();
-
-    await _roomRef.set({
-      'host': myId,
-      'players': [myId],
-      'playerHands': {myId: 5},
-      'deck': fullDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
-      'field': {'number': firstCard.number, 'suit': firstCard.suit.name},
-      'isInitialPhase': true,
-      'currentTurnIndex': 0,
-      'isDrawCompetitive': false,
-      'lastPlayerId': 'system',
-    });
-    setState(() { myHand = initialHand; firebaseDeck = fullDeck; });
+    List<CardModel> deck = _generateFullDeck()..shuffle();
+    final hand = deck.sublist(0, 5);
+    deck.removeRange(0, 5);
+    final first = deck.removeLast();
+    await _db.setupRoom(myId, deck, first);
+    setState(() { myHand = hand; });
   }
 
   Future<void> _joinAsGuest() async {
-    int retryCount = 0;
-    while (retryCount < 5) {
-      final snapshot = await _roomRef.get();
-      final deckData = snapshot.child('deck').value as List?;
-      if (deckData != null && deckData.length >= 5) {
-        List<CardModel> currentDeck = deckData.map((item) {
-          final map = item as Map;
-          return CardModel(number: (map['number'] as num).toInt(), suit: Suit.values.firstWhere((e) => e.name == map['suit']));
-        }).toList();
-        setState(() { myHand = currentDeck.sublist(0, 5); firebaseDeck = currentDeck.sublist(5); });
-        await _roomRef.update({'deck': firebaseDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList()});
-        await _syncMyHandCount();
-        return;
-      }
-      await Future.delayed(const Duration(seconds: 1));
-      retryCount++;
+    final snapshot = await _db.getRoomSnapshot();
+    final deckData = snapshot.child('deck').value as List?;
+    if (deckData != null && deckData.length >= 5) {
+      List<CardModel> deck = deckData.map((i) => CardModel(
+        number: (i['number'] as num).toInt(),
+        suit: Suit.values.firstWhere((e) => e.name == i['suit']),
+      )).toList();
+      setState(() { myHand = deck.sublist(0, 5); });
+      await _db.syncHandCount(myId, 5);
+      await _db.updatePlayers([...playerIds]); // 参加を確定
     }
   }
 
-  void _listenToRoom() {
-    _roomSubscription = _roomRef.onValue.listen((event) {
-      final data = event.snapshot.value as Map?;
-      if (data == null) return;
-      if (mounted) {
-        setState(() {
-          hostId = data['host']?.toString();
-          playerIds = List<String>.from(data['players'] ?? []);
-          currentTurnIndex = (data['currentTurnIndex'] as num? ?? 0).toInt();
-          isDrawCompetitive = data['isDrawCompetitive'] ?? false;
-          lastPlayerId = data['lastPlayerId']?.toString();
-          if (data['playerHands'] != null) handCounts = Map<String, int>.from(data['playerHands']);
-          
-          if (data['deck'] != null) {
-            firebaseDeck = (data['deck'] as List).map((item) {
-              final map = item as Map;
-              return CardModel(number: (map['number'] as num).toInt(), suit: Suit.values.firstWhere((e) => e.name == map['suit']));
-            }).toList();
-          }
-          final field = data['field'] as Map?;
-          if (field != null) {
-            fieldNumber = (field['number'] as num).toInt();
-            fieldSuit = Suit.values.firstWhere((e) => e.name == field['suit']);
-            isInitialPhase = data['isInitialPhase'] ?? true;
-          }
-        });
-      }
-    });
-  }
-
   void _playCard(CardModel card) async {
-    int myIndex = playerIds.indexOf(myId);
+    int nextIdx = (playerIds.indexOf(myId) + 1) % playerIds.length;
     setState(() => myHand.remove(card));
-    await _roomRef.update({
-      'field': {'number': card.number, 'suit': card.suit.name},
-      'isInitialPhase': false,
-      'currentTurnIndex': (myIndex + 1) % playerIds.length,
-      'isDrawCompetitive': false,
-      'lastPlayerId': myId,
-    });
-    await _syncMyHandCount();
+    await _db.playCard(nextTurnIndex: nextIdx, card: card, myId: myId);
+    await _db.syncHandCount(myId, myHand.length);
   }
 
   Future<void> _drawCard() async {
     if (firebaseDeck.isEmpty) return;
-    final snapshot = await _roomRef.child('deck').get();
-    if (snapshot.exists) {
-      List<dynamic> deckData = List.from(snapshot.value as List);
-      var lastCardMap = deckData.removeLast() as Map;
-      CardModel drawnCard = CardModel(number: (lastCardMap['number'] as num).toInt(), suit: Suit.values.firstWhere((e) => e.name == lastCardMap['suit']));
-      setState(() => myHand.add(drawnCard));
-      await _roomRef.update({
-        'deck': deckData,
-        'currentTurnIndex': (currentTurnIndex + 1) % playerIds.length,
-        'isDrawCompetitive': true,
-      });
-      await _syncMyHandCount();
-    }
+    final nextDeck = firebaseDeck.sublist(0, firebaseDeck.length - 1);
+    final drawn = firebaseDeck.last;
+    setState(() => myHand.add(drawn));
+    await _db.drawCard(
+      remainingDeck: nextDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
+      nextTurnIndex: (currentTurnIndex + 1) % playerIds.length,
+    );
+    await _db.syncHandCount(myId, myHand.length);
   }
 
-  Future<void> _drawNextInitialCard() async {
+  Future<void> _flipInitial() async {
     if (firebaseDeck.isEmpty) return;
-    CardModel nextCard = firebaseDeck.removeLast();
-    await _roomRef.update({
-      'field': {'number': nextCard.number, 'suit': nextCard.suit.name},
-      'deck': firebaseDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
-      'lastPlayerId': 'system',
-    });
+    final next = firebaseDeck.removeLast();
+    await _db.flipCard(firebaseDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(), next);
   }
-
-  void _resetGame() => _roomRef.remove().then((_) => _initializeGame());
 
   List<CardModel> _generateFullDeck() {
-    List<CardModel> deck = [];
-    for (var suit in Suit.values) {
-      if (suit == Suit.joker) { deck.add(CardModel(suit: suit, number: 0)); }
-      else { for (int i = 1; i <= 13; i++) { deck.add(CardModel(suit: suit, number: i)); } }
+    List<CardModel> d = [];
+    for (var s in Suit.values) {
+      if (s == Suit.joker) { d.add(CardModel(suit: s, number: 0)); }
+      else { for (int i = 1; i <= 13; i++) { d.add(CardModel(suit: s, number: i)); } }
     }
-    return deck;
+    return d;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (isInitializing || fieldNumber == -1 || (myHand.isEmpty && isInitialPhase)) {
+    if (isInitializing || fieldNumber == -1) {
       return const Scaffold(backgroundColor: Color(0xFF1B5E20), body: Center(child: CircularProgressIndicator(color: Colors.white)));
     }
-
-    int myIndex = playerIds.indexOf(myId);
-    bool isMyTurn = (currentTurnIndex % playerIds.length == myIndex);
+    int myIdx = playerIds.indexOf(myId);
+    bool isMyTurn = (currentTurnIndex % playerIds.length == myIdx);
     bool iAmDrawer = isDrawCompetitive && playerIds[(currentTurnIndex - 1 + playerIds.length) % playerIds.length] == myId;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
-      appBar: AppBar(
-        title: Text(isHost ? 'もり (ホスト)' : 'もり (ゲスト)'),
-        backgroundColor: Colors.transparent,
-        actions: [Center(child: Padding(padding: const EdgeInsets.only(right: 16), child: Text('山札: ${firebaseDeck.length}')))],
-      ),
-      body: SafeArea(
-        child: GameView(
-          fieldNumber: fieldNumber,
-          fieldSuit: fieldSuit,
-          myHand: myHand,
-          playerIds: playerIds,
-          myId: myId,
-          handCounts: handCounts,
-          currentTurnIndex: currentTurnIndex,
-          lastPlayerId: lastPlayerId,
-          isInitialPhase: isInitialPhase,
-          isMyTurn: isMyTurn,
-          isHost: isHost,
-          iAmDrawer: iAmDrawer,
-          onPlay: _playCard,
-          onDraw: _drawCard,
-          onFlip: _drawNextInitialCard,
-          onMori: () => _showResultDialog("もり！！！", "勝利！ 敗者: $lastPlayerId さん"),
-        ),
+      appBar: AppBar(title: Text(myId == hostId ? 'もり (ホスト)' : 'もり (ゲスト)'), backgroundColor: Colors.transparent),
+      body: GameView(
+        fieldNumber: fieldNumber, fieldSuit: fieldSuit, myHand: myHand,
+        playerIds: playerIds, myId: myId, handCounts: handCounts,
+        currentTurnIndex: currentTurnIndex, lastPlayerId: lastPlayerId,
+        isInitialPhase: isInitialPhase, isMyTurn: isMyTurn,
+        isHost: myId == hostId, iAmDrawer: iAmDrawer,
+        onPlay: _playCard, onDraw: _drawCard, onFlip: _flipInitial,
+        onMori: () => _showResultDialog("もり！！！", "勝利！敗者: $lastPlayerId さん"),
       ),
     );
   }
 
-  void _showResultDialog(String title, String message) {
+  void _showResultDialog(String t, String m) {
     showDialog(context: context, barrierDismissible: false, builder: (_) => AlertDialog(
-      title: Text(title), content: Text(message),
-      actions: [TextButton(onPressed: () { Navigator.pop(context); _resetGame(); }, child: const Text('リセット'))],
+      title: Text(t), content: Text(m),
+      actions: [TextButton(onPressed: () { Navigator.pop(context); _db.deleteRoom().then((_) => _initializeGame()); }, child: const Text('リセット'))],
     ));
   }
 }
