@@ -43,7 +43,6 @@ class GameView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 判定はロジック層へ
     bool canMoriNow = MoriLogic.canMori(
       fieldNumber: fieldNumber,
       hand: myHand,
@@ -57,8 +56,12 @@ class GameView extends StatelessWidget {
         _buildOthersStatus(),
         const Spacer(),
         Text(
-          isInitialPhase ? "【初期】数字を合わせろ" : (isMyTurn || iAmDrawer ? "あなたの番 / 競争中" : "相手の番です"),
-          style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold, fontSize: 16),
+          isInitialPhase ? "【初期フェーズ】数字を合わせろ" : (isMyTurn || iAmDrawer ? "あなたの番" : "相手の番です"),
+          style: TextStyle(
+            color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70,
+            fontWeight: FontWeight.bold,
+            fontSize: 16
+          ),
         ),
         const SizedBox(height: 15),
         Column(

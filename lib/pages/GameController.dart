@@ -6,17 +6,17 @@ import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 
 class GameController extends StatefulWidget {
-  const GameController({super.key});
+  final String roomId;
+  const GameController({super.key, required this.roomId});
 
   @override
   State<GameController> createState() => _GameControllerState();
 }
 
 class _GameControllerState extends State<GameController> {
-  final FirebaseService _db = FirebaseService();
+  late final FirebaseService _db;
   StreamSubscription<DatabaseEvent>? _subscription;
 
-  // 状態データ
   late String myId;
   String? hostId;
   List<CardModel> firebaseDeck = [];
@@ -34,6 +34,7 @@ class _GameControllerState extends State<GameController> {
   @override
   void initState() {
     super.initState();
+    _db = FirebaseService(widget.roomId);
     myId = DateTime.now().millisecondsSinceEpoch.toString();
     _listenToRoom();
     _initializeGame();
@@ -76,13 +77,6 @@ class _GameControllerState extends State<GameController> {
     setState(() => isInitializing = true);
     final snapshot = await _db.getRoomSnapshot();
     
-    List<String> players = snapshot.child('players').exists 
-        ? List<String>.from(snapshot.child('players').value as List) : [];
-    if (!players.contains(myId)) {
-      players.add(myId);
-      await _db.updatePlayers(players);
-    }
-
     if (!snapshot.exists || snapshot.child('host').value == null) {
       await _setupNewRoom();
     } else {
@@ -102,6 +96,12 @@ class _GameControllerState extends State<GameController> {
 
   Future<void> _joinAsGuest() async {
     final snapshot = await _db.getRoomSnapshot();
+    List<String> players = List<String>.from(snapshot.child('players').value as List);
+    if (!players.contains(myId)) {
+      players.add(myId);
+      await _db.updatePlayers(players);
+    }
+    
     final deckData = snapshot.child('deck').value as List?;
     if (deckData != null && deckData.length >= 5) {
       List<CardModel> deck = deckData.map((i) => CardModel(
@@ -110,7 +110,6 @@ class _GameControllerState extends State<GameController> {
       )).toList();
       setState(() { myHand = deck.sublist(0, 5); });
       await _db.syncHandCount(myId, 5);
-      await _db.updatePlayers([...playerIds]); // 参加を確定
     }
   }
 
@@ -153,21 +152,28 @@ class _GameControllerState extends State<GameController> {
     if (isInitializing || fieldNumber == -1) {
       return const Scaffold(backgroundColor: Color(0xFF1B5E20), body: Center(child: CircularProgressIndicator(color: Colors.white)));
     }
+
     int myIdx = playerIds.indexOf(myId);
     bool isMyTurn = (currentTurnIndex % playerIds.length == myIdx);
     bool iAmDrawer = isDrawCompetitive && playerIds[(currentTurnIndex - 1 + playerIds.length) % playerIds.length] == myId;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
-      appBar: AppBar(title: Text(myId == hostId ? 'もり (ホスト)' : 'もり (ゲスト)'), backgroundColor: Colors.transparent),
-      body: GameView(
-        fieldNumber: fieldNumber, fieldSuit: fieldSuit, myHand: myHand,
-        playerIds: playerIds, myId: myId, handCounts: handCounts,
-        currentTurnIndex: currentTurnIndex, lastPlayerId: lastPlayerId,
-        isInitialPhase: isInitialPhase, isMyTurn: isMyTurn,
-        isHost: myId == hostId, iAmDrawer: iAmDrawer,
-        onPlay: _playCard, onDraw: _drawCard, onFlip: _flipInitial,
-        onMori: () => _showResultDialog("もり！！！", "勝利！敗者: $lastPlayerId さん"),
+      appBar: AppBar(
+        title: Text('ルーム: ${widget.roomId} (${myId == hostId ? "ホスト" : "ゲスト"})'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
+      body: SafeArea(
+        child: GameView(
+          fieldNumber: fieldNumber, fieldSuit: fieldSuit, myHand: myHand,
+          playerIds: playerIds, myId: myId, handCounts: handCounts,
+          currentTurnIndex: currentTurnIndex, lastPlayerId: lastPlayerId,
+          isInitialPhase: isInitialPhase, isMyTurn: isMyTurn,
+          isHost: myId == hostId, iAmDrawer: iAmDrawer,
+          onPlay: _playCard, onDraw: _drawCard, onFlip: _flipInitial,
+          onMori: () => _showResultDialog("もり！！！", "勝利！敗者: $lastPlayerId さん"),
+        ),
       ),
     );
   }
