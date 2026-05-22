@@ -11,18 +11,20 @@ class FirebaseService {
 
   Stream<DatabaseEvent> get roomStream => _roomRef.onValue;
 
-  Future<void> setupRoom(String myId, List<CardModel> deck) async {
+  Future<void> setupRoom(String myId, List<CardModel> deck, {required bool isPrivate}) async {
     await _roomRef.set({
       'host': myId,
       'players': [myId],
       'playerHands': {myId: 5},
       'deck': deck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
-      'field': {'number': -1, 'suit': 'joker'}, // 初期値
+      // 共有の鍵：初期状態は -1
+      'field': {'number': -1, 'suit': 'joker'},
       'isInitialPhase': true,
       'currentTurnIndex': 0,
       'isDrawCompetitive': false,
       'lastPlayerId': 'system',
       'gameStarted': false,
+      'isPrivate': isPrivate,
     });
   }
 
@@ -63,6 +65,7 @@ class FirebaseService {
     });
   }
 
+  // ここが場札の共有に最も重要：field全体を上書き
   Future<void> flipCard(List<dynamic> nextDeck, CardModel nextCard) async {
     await _roomRef.update({
       'field': {'number': nextCard.number, 'suit': nextCard.suit.name},
