@@ -47,7 +47,6 @@ class CardModel extends StatelessWidget {
     );
   }
 
-  /// アイコンエラーを回避するため、特殊文字（テキスト）でマークを表現
   Widget _buildSuitIcon() {
     String mark;
     Color color;

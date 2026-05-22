@@ -43,7 +43,6 @@ class GameView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 判定はロジック層へ
     bool canMoriNow = MoriLogic.canMori(
       fieldNumber: fieldNumber,
       hand: myHand,
@@ -57,8 +56,14 @@ class GameView extends StatelessWidget {
         _buildOthersStatus(),
         const Spacer(),
         Text(
-          isInitialPhase ? "【初期】数字を合わせろ" : (isMyTurn || iAmDrawer ? "あなたの番 / 競争中" : "相手の番です"),
-          style: TextStyle(color: (isMyTurn || iAmDrawer) ? Colors.orange : Colors.white70, fontWeight: FontWeight.bold, fontSize: 16),
+          fieldNumber == -1 
+            ? (isHost ? "山札をめくって開始してください" : "ホストの開始を待っています...")
+            : (isInitialPhase ? "【初期フェーズ】数字を合わせろ" : (isMyTurn || iAmDrawer ? "あなたの番" : "相手の番です")),
+          style: TextStyle(
+            color: (isMyTurn || iAmDrawer || fieldNumber == -1) ? Colors.orange : Colors.white70,
+            fontWeight: FontWeight.bold,
+            fontSize: 16
+          ),
         ),
         const SizedBox(height: 15),
         Column(
@@ -74,7 +79,18 @@ class GameView extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 20),
-            CardModel(suit: fieldSuit, number: fieldNumber),
+            // 修正箇所：fieldNumberが-1のときはカードの枠だけ表示
+            fieldNumber == -1 
+              ? Container(
+                  width: 60, height: 90,
+                  decoration: BoxDecoration(
+                    color: Colors.black26,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white24, width: 2),
+                  ),
+                  child: const Center(child: Icon(Icons.style, color: Colors.white10, size: 40)),
+                )
+              : CardModel(suit: fieldSuit, number: fieldNumber),
           ],
         ),
         const Spacer(),
