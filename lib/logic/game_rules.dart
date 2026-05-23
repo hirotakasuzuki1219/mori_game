@@ -1,9 +1,10 @@
-import 'package:mori_game/models/CardModel.dart';
+import '../features/game/game_board_view.dart';
 
-class MoriLogic {
+/// 数学的な判定ルールのみを司る。
+class GameRules {
   static bool canMori({
     required int fieldNumber,
-    required List<CardModel> hand,
+    required List<CardWidget> hand,
     required String? lastPlayerId,
     required String myId,
     required bool isInitialPhase,
@@ -12,14 +13,12 @@ class MoriLogic {
       return false;
     }
 
-    if (hand.length == 2) {
-      int a = hand[0].number;
-      int b = hand[1].number;
-      return _checkFourOperations(fieldNumber, a, b);
-    }
-    
     if (hand.length == 1) {
       return hand[0].number == fieldNumber;
+    }
+    
+    if (hand.length == 2) {
+      return _checkFourOperations(fieldNumber, hand[0].number, hand[1].number);
     }
 
     return false;
