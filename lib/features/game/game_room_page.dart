@@ -120,8 +120,9 @@ class _GameRoomPageState extends State<GameRoomPage> {
       isInitialPhase: isInitialPhase,
       onPlay: _onPlay, 
       onDraw: () {}, 
-      onFlip: () {
+      onFlip: () async {
         if (deck.isEmpty) return;
+
         final first = deck.last;
 
         final remainingDeckData = deck
@@ -129,15 +130,16 @@ class _GameRoomPageState extends State<GameRoomPage> {
           .map((c) => {'number': c.number, 'suit': c.suit.name})
           .toList();
 
-        _db.updateGameStatus({
-          'gameStarted': true, 
+        await _db.updateGameStatus({
+          'gameStarted': true,
+          'isInitialPhase': false,
           'field': {
             'number': first.number, 
             'suit': first.suit.name
           },
           'deck': remainingDeckData,
-          'isInitialPhase': false,
           'lastPlayerId': 'system',
+          'currentTurnIndex': 0,
         });
       },
       onMori: () => print("Win"),

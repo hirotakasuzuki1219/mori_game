@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import '../../logic/game_rules.dart'; // ここを確実にインポート
+import '../../logic/game_rules.dart';
 
 enum Suit { spade, heart, diamond, club, joker }
 
+// --- CardWidget は以前の通り ---
 class CardWidget extends StatelessWidget {
   final int number;
   final Suit suit;
@@ -40,6 +41,7 @@ class CardWidget extends StatelessWidget {
   }
 }
 
+// --- GameBoardView 本体 ---
 class GameBoardView extends StatelessWidget {
   final String roomId;
   final int fieldNumber;
@@ -52,6 +54,7 @@ class GameBoardView extends StatelessWidget {
   final bool isHost;
   final String? lastPlayerId;
   final bool isInitialPhase;
+
   final Function(CardWidget) onPlay;
   final VoidCallback onDraw;
   final VoidCallback onFlip;
@@ -67,13 +70,9 @@ class GameBoardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // GameRulesが正しく参照できるはずです
     bool canMori = GameRules.canMori(
-      fieldNumber: fieldNumber,
-      hand: myHand,
-      lastPlayerId: lastPlayerId,
-      myId: myId,
-      isInitialPhase: isInitialPhase,
+      fieldNumber: fieldNumber, hand: myHand,
+      lastPlayerId: lastPlayerId, myId: myId, isInitialPhase: isInitialPhase,
     );
 
     return Scaffold(
@@ -83,27 +82,26 @@ class GameBoardView extends StatelessWidget {
         children: [
           _buildOthersStatus(),
           const Spacer(),
-          Column(
-            children: [
-              if (isInitialPhase && isHost) ElevatedButton(onPressed: onFlip, child: const Text("めくって開始")),
-              const SizedBox(height: 20),
-              fieldNumber == -1 ? const Icon(Icons.style, size: 80, color: Colors.white24) : CardWidget(suit: fieldSuit, number: fieldNumber),
-            ],
-          ),
+          _buildFieldArea(), // ← ここで呼び出し
           const Spacer(),
-          if (canMori) ElevatedButton(onPressed: onMori, child: const Text("もり！")),
-          SizedBox(
-            height: 120,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: myHand.map((c) => Padding(padding: const EdgeInsets.all(4), child: CardWidget(suit: c.suit, number: c.number, onTap: () => onPlay(c)))).toList(),
+          if (canMori) 
+            Padding(
+              padding: const EdgeInsets.only(bottom: 20),
+              child: ElevatedButton(
+                onPressed: onMori,
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)),
+                child: const Text("もり！", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              ),
             ),
-          ),
+          _buildMyHandArea(),
         ],
       ),
     );
   }
 
+  // --- パーツごとに切り出したメソッド ---
+
+  /// 1. 他のプレイヤーの状態表示
   Widget _buildOthersStatus() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -111,6 +109,44 @@ class GameBoardView extends StatelessWidget {
         padding: const EdgeInsets.all(8),
         child: Column(children: [const Icon(Icons.person, color: Colors.white), Text('${handCounts[id] ?? 0}枚', style: const TextStyle(color: Colors.white))]),
       )).toList(),
+    );
+  }
+
+  /// 2. 場のカードエリア（今回の修正のメイン）
+  Widget _buildFieldArea() {
+    return Column(
+      children: [
+        if (isInitialPhase && isHost)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 20),
+            child: ElevatedButton(
+              onPressed: onFlip,
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.yellow[800]),
+              child: const Text("山札をめくって開始", style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ),
+        // カード本体
+        fieldNumber == -1 
+            ? const Icon(Icons.style, size: 80, color: Colors.white24) 
+            : CardWidget(suit: fieldSuit, number: fieldNumber),
+        const SizedBox(height: 8),
+        const Text("場のカード", style: TextStyle(color: Colors.white70, fontSize: 12)),
+      ],
+    );
+  }
+
+  /// 3. 自分の手札エリア
+  Widget _buildMyHandArea() {
+    return Container(
+      height: 120,
+      padding: const EdgeInsets.only(bottom: 20),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: myHand.map((c) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: CardWidget(suit: c.suit, number: c.number, onTap: () => onPlay(c)),
+        )).toList(),
+      ),
     );
   }
 }
