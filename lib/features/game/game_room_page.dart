@@ -19,6 +19,8 @@ class _GameRoomPageState extends State<GameRoomPage> {
   StreamSubscription? _sub;
   String myId = DateTime.now().millisecondsSinceEpoch.toString();
 
+  bool get isHost => myId == hostId;
+
   // 内部状態
   List<CardWidget> myHand = [];
   List<int> selectedIndices = [];
@@ -94,12 +96,16 @@ class _GameRoomPageState extends State<GameRoomPage> {
     int myIdx = playerIds.indexOf(myId);
     bool isMyTurn = (currentTurn % playerIds.length == myIdx);
     
+    bool isJokerField = (fieldSuit == Suit.joker);
+
+    bool isInterrupt = (!isMyTurn && card.number == fieldNumber && fieldNumber != -1);
+
+    bool canPlayInTurn = isMyTurn && GameRules.canPlayNormal(fieldNumber, fieldSuit, card);
+
     // 自分のターン、またはターン外でも同じ数字なら即座に出す
-    if (isMyTurn || card.number == fieldNumber) {
-      if (GameRules.canPlayNormal(fieldNumber, fieldSuit, card) || card.number == fieldNumber) {
+    if (canPlayInTurn || isInterrupt || isJokerField) {
         _executePlay([card]);
         return;
-      }
     }
 
     // それ以外は「もり」のための複数選択
@@ -128,14 +134,17 @@ class _GameRoomPageState extends State<GameRoomPage> {
   // ドロー処理
   void _onDraw() {
     if (deck.isEmpty) return;
+
+    final drawn = deck.last;
+
+    bool canPlayDrawnCard = GameRules.canPlayNormal(fieldNumber, fieldSuit, drawn);
     
     // バースト判定（手札7枚で負け）
-    if (GameRules.isBurst(myHand.length + 1)) {
+    if (GameRules.isBurst(myHand.length + 1, canPlayDrawnCard)) {
       _db.updateGameStatus({'winnerId': 'other_players'}); // 自分以外が勝利扱い
       return;
     }
 
-    final drawn = deck.last;
     setState(() {
       myHand.add(drawn);
       selectedIndices.clear();
@@ -150,7 +159,13 @@ class _GameRoomPageState extends State<GameRoomPage> {
 
   // プレイ実行（Firebase更新）
   void _executePlay(List<CardWidget> cards) {
+    if (cards.isEmpty) return;
     final lastCard = cards.last;
+
+    int myIdx = playerIds.indexOf(myId);
+
+    int nextTurnIndex = (myIdx + 1)% playerIds.length;
+
     setState(() {
       // 手札から削除
       for (var c in cards) {
@@ -160,11 +175,15 @@ class _GameRoomPageState extends State<GameRoomPage> {
     });
 
     _db.updateGameStatus({
-      'field': {'number': lastCard.number, 'suit': lastCard.suit.name},
+      'field': {
+        'number': lastCard.number, 
+        'suit': lastCard.suit.name
+      },
       'playerHands/$myId': myHand.length,
       'lastPlayerId': myId,
-      'currentTurnIndex': (currentTurn + 1) % playerIds.length,
+      'currentTurnIndex': nextTurnIndex,
       'isInitialPhase': false, // 誰かが出した瞬間に初期フェーズ終了
+      'gameStarted': true,
     });
 
     if (myHand.isEmpty) {
@@ -174,11 +193,16 @@ class _GameRoomPageState extends State<GameRoomPage> {
 
   // ホストによる山札めくり（初期フェーズ）
   void _onFlip() {
-    if (deck.isEmpty) return;
-    final f = deck.last;
+    if (!isHost || deck.isEmpty) return;
+    
+    final flippedCard = deck.last;
+    final newDeck = deck.sublist(0, deck.length - 1);
+
     _db.updateGameStatus({
-      'field': {'number': f.number, 'suit': f.suit.name},
-      'deck': deck.sublist(0, deck.length - 1).map((c) => {'number': c.number, 'suit': c.suit.name}).toList(),
+      'field': {'number': flippedCard.number, 'suit': flippedCard.suit.name},
+      'deck': newDeck.map((c) => {'number': c.number, 'suit': c.suit.name}).toList(), 
+      'isInitialPhase': true,
+      'lastPlayerId': 'system',
     });
   }
 

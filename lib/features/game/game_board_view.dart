@@ -98,23 +98,51 @@ class GameBoardView extends StatelessWidget {
   }
 
   Widget _buildFieldArea() {
+    bool isJokerField = fieldSuit == Suit.joker;
+    int myIdx = playerIds.indexOf(myId);
+    bool isMyTurn = (currentTurnIndex % playerIds.length == myIdx);
+
     return Column(children: [
       if (isInitialPhase && isHost)
         Padding(
           padding: const EdgeInsets.only(bottom: 20),
           child: ElevatedButton(
             onPressed: onFlip,
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.yellow[800], foregroundColor: Colors.white),
-            child: const Text("山札をめくる", style: TextStyle(fontWeight: FontWeight.bold)),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.yellow[900]),
+            child: const Text("山札をめくる", style: TextStyle(color: Colors.white)),
           ),
         ),
+
+      // ガイドメッセージ
+      if (isJokerField)
+        const Text("🃏 ジョーカー！誰でも出せます！", 
+          style: TextStyle(color: Colors.yellow, fontWeight: FontWeight.bold)),
+      if (!isMyTurn && !isJokerField && fieldNumber != -1)
+        const Text("同じ数字なら割り込み可能", 
+          style: TextStyle(color: Colors.white70, fontSize: 10)),
+
+
+
       Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        // 山札の見た目
         GestureDetector(
           onTap: onDraw,
-          child: Container(width: 60, height: 90, decoration: BoxDecoration(color: Colors.blueGrey[800], borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.help_outline, color: Colors.white24)),
+          child: Container(
+            width: 60, height: 90, 
+            decoration: BoxDecoration(
+              color: Colors.blueGrey[900], 
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.white24)
+            ),
+            child: const Icon(Icons.help_outline, color: Colors.white24),
+          ),
         ),
         const SizedBox(width: 20),
-        fieldNumber == -1 ? Container(width: 60, height: 90, decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(8))) : CardWidget(suit: fieldSuit, number: fieldNumber),
+        // 場札
+        fieldNumber == -1 
+          ? Container(width: 60, height: 90, decoration: BoxDecoration(border: Border.all(color: Colors.white24), borderRadius: BorderRadius.circular(8)))
+          : CardWidget(suit: fieldSuit, number: fieldNumber),
+
       ]),
     ]);
   }
