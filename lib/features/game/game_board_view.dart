@@ -72,7 +72,7 @@ class GameBoardView extends StatelessWidget {
   final String? lastPlayerId;
   final bool isInitialPhase;
   final String moriPhase; 
-  final String? lastMoriPlayerId; // 追加: 直前にもりを宣言したプレイヤーID
+  final bool hasDeclaredMori; // 追加: 自分がこのゲーム内で宣言したか
 
   final Function(int) onCardTap;
   final VoidCallback onMori;
@@ -84,25 +84,23 @@ class GameBoardView extends StatelessWidget {
     required this.myHand, required this.playerIds,
     required this.myId, required this.handCounts, required this.currentTurnIndex,
     required this.isHost, this.lastPlayerId, required this.isInitialPhase,
-    required this.moriPhase, required this.lastMoriPlayerId, // 追加
+    required this.moriPhase, required this.hasDeclaredMori,
     required this.onCardTap, required this.onMori,
     required this.onDraw, required this.onFlip,
   });
 
   @override
   Widget build(BuildContext context) {
-    // 手札全体を使ったもりの条件判定
+    // 1. 手札全体を使ったもりの基本条件判定
     bool canMori = GameRules.isValidMori(fieldNumber, myHand);
     
-    // 通常時（誰ももりを言っていない時）の自滅防止
+    // 2. 通常時（誰ももりを言っていない時）の自滅防止
     if (moriPhase == 'none' && lastPlayerId == myId) {
       canMori = false;
     }
 
-    // 【今回の修正箇所】自分が直前に「もり/もり返し」を宣言した本人の場合、連続で宣言（セルフもり返し）はできない
-    if (moriPhase == 'mori_declared' && lastMoriPlayerId == myId) {
-      canMori = false;
-    }
+    // 3. 【修正の肝】条件を満たしていても、一度もりを宣言した人はゲーム終了まで強制グレーアウト
+    bool isButtonEnabled = canMori && !hasDeclaredMori;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
@@ -114,11 +112,11 @@ class GameBoardView extends StatelessWidget {
           _buildFieldArea(),
           const Spacer(),
           
-          // --- もりボタン（常設、条件を満たし、かつ自分が直前の宣言者でない時のみ押せる） ---
+          // --- もりボタン（常設、条件を満たし、かつ未宣言の人だけが押せる） ---
           Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: ElevatedButton(
-              onPressed: canMori ? onMori : null, 
+              onPressed: isButtonEnabled ? onMori : null, // 活性・非活性の制御
               style: ElevatedButton.styleFrom(
                 backgroundColor: moriPhase == 'mori_declared' ? Colors.red : Colors.orange, 
                 disabledBackgroundColor: Colors.grey[700], 
@@ -129,7 +127,7 @@ class GameBoardView extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 24, 
                   fontWeight: FontWeight.bold, 
-                  color: canMori ? Colors.white : Colors.white38
+                  color: isButtonEnabled ? Colors.white : Colors.white38
                 )
               ),
             ),

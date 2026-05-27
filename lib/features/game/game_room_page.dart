@@ -38,6 +38,9 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
   Timer? _moriTimer;         
   String _lastTrackedMoriPlayer = ''; 
 
+  // 【今回の追加】自分がこのゲーム中にもり/もり返しを宣言したかのフラグ
+  bool hasDeclaredMori = false;
+
   // 部屋の開閉状態管理フラグ
   String roomStatus = 'open'; 
   bool _isClosedDialogShown = false;
@@ -71,7 +74,6 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
   Future<void> _init() async {
     final snap = await _db.getSnapshot();
     if (!snap.exists) {
-      // ホスト：山札作成と初期化
       List<CardWidget> fullDeck = _generateDeck()..shuffle();
       final hand = fullDeck.sublist(0, 5);
       fullDeck.removeRange(0, 5);
@@ -83,7 +85,6 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
 
       setState(() => myHand = hand);
     } else {
-      // ゲスト：参加処理
       bool isStarted = snap.child('gameStarted').value == true;
       String currentStatus = snap.child('roomStatus').value as String? ?? 'open';
       
@@ -145,6 +146,11 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       moriPhase = data['moriPhase'] ?? 'none';
       lastMoriPlayerId = data['lastMoriPlayerId'];
       loserPlayerId = data['loserPlayerId'];
+
+      // 通常状態（none）に戻ったら、自分の宣言フラグをリセットする
+      if (moriPhase == 'none') {
+        hasDeclaredMori = false;
+      }
 
       if (roomStatus == 'closed' && !isHost && !_isClosedDialogShown) {
         _isClosedDialogShown = true;
@@ -210,11 +216,18 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
     }
   }
 
+  // もり・もり返しボタンを押した時の処理
   void _onMori() {
     if (GameRules.isValidMori(fieldNumber, myHand)) {
+      // 自分が宣言したことをローカルに記憶（View側で即座にボタンをグレーアウトさせる）
+      setState(() {
+        hasDeclaredMori = true;
+      });
+
       if (moriPhase == 'none') {
         if (lastPlayerId == myId) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('自滅はできません！')));
+          setState(() { hasDeclaredMori = false; });
           return;
         }
         _db.updateGameStatus({
@@ -223,13 +236,13 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
           'loserPlayerId': lastPlayerId
         });
       } else if (moriPhase == 'mori_declared') {
-        // もり返しが連続で宣言された場合、直前にもりを宣言していた人が敗北対象になる
         _db.updateGameStatus({
           'lastMoriPlayerId': myId,
-          'loserPlayerId': lastMoriPlayerId,
+          'loserPlayerId': lastMoriPlayerId, // 直前の宣言者が新たな暫定敗者に
         });
       }
-      _executePlay(myHand, isMoriAction: true);
+      
+      // 【重要】手札は減らさず、公開キープ状態のままFirebaseの状態だけを更新
     }
   }
 
@@ -256,7 +269,7 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
     });
   }
 
-  void _executePlay(List<CardWidget> cards, {bool isMoriAction = false}) {
+  void _executePlay(List<CardWidget> cards) {
     if (cards.isEmpty) return;
     final lastCard = cards.last;
     int myIdx = playerIds.indexOf(myId);
@@ -268,21 +281,16 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       }
     });
 
-    Map<String, dynamic> updates = {
+    _db.updateGameStatus({
       'field': {'number': lastCard.number, 'suit': lastCard.suit.name},
       'playerHands/$myId': myHand.length,
-    };
+      'lastPlayerId': myId,
+      'currentTurnIndex': nextTurnIndex,
+      'isInitialPhase': false,
+      'gameStarted': true,
+    });
 
-    if (!isMoriAction) {
-      updates['lastPlayerId'] = myId;
-      updates['currentTurnIndex'] = nextTurnIndex;
-      updates['isInitialPhase'] = false;
-      updates['gameStarted'] = true;
-    }
-
-    _db.updateGameStatus(updates);
-
-    if (myHand.isEmpty && !isMoriAction) {
+    if (myHand.isEmpty) {
       _db.updateGameStatus({'winnerId': myId});
     }
   }
@@ -348,7 +356,7 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       myHand: myHand, playerIds: playerIds, myId: myId, handCounts: handCounts, 
       currentTurnIndex: currentTurn, isHost: isHost, lastPlayerId: lastPlayerId, 
       isInitialPhase: isInitialPhase, moriPhase: moriPhase, 
-      lastMoriPlayerId: lastMoriPlayerId, // 【修正点】Viewへ現在の宣言者を渡す
+      hasDeclaredMori: hasDeclaredMori, // View側へ自分の宣言状態を渡す
       onCardTap: _onCardTap, onMori: _onMori, onDraw: _onDraw, onFlip: _onFlip,
     );
   }
