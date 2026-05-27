@@ -72,6 +72,7 @@ class GameBoardView extends StatelessWidget {
   final String? lastPlayerId;
   final bool isInitialPhase;
   final String moriPhase; 
+  final String? lastMoriPlayerId; // 追加: 直前にもりを宣言したプレイヤーID
 
   final Function(int) onCardTap;
   final VoidCallback onMori;
@@ -83,7 +84,7 @@ class GameBoardView extends StatelessWidget {
     required this.myHand, required this.playerIds,
     required this.myId, required this.handCounts, required this.currentTurnIndex,
     required this.isHost, this.lastPlayerId, required this.isInitialPhase,
-    required this.moriPhase,
+    required this.moriPhase, required this.lastMoriPlayerId, // 追加
     required this.onCardTap, required this.onMori,
     required this.onDraw, required this.onFlip,
   });
@@ -92,8 +93,16 @@ class GameBoardView extends StatelessWidget {
   Widget build(BuildContext context) {
     // 手札全体を使ったもりの条件判定
     bool canMori = GameRules.isValidMori(fieldNumber, myHand);
-    // 通常時の自滅防止
-    if (moriPhase == 'none' && lastPlayerId == myId) canMori = false;
+    
+    // 通常時（誰ももりを言っていない時）の自滅防止
+    if (moriPhase == 'none' && lastPlayerId == myId) {
+      canMori = false;
+    }
+
+    // 【今回の修正箇所】自分が直前に「もり/もり返し」を宣言した本人の場合、連続で宣言（セルフもり返し）はできない
+    if (moriPhase == 'mori_declared' && lastMoriPlayerId == myId) {
+      canMori = false;
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B5E20),
@@ -105,14 +114,14 @@ class GameBoardView extends StatelessWidget {
           _buildFieldArea(),
           const Spacer(),
           
-          // --- もりボタン（常設、条件を満たした時のみ押せる） ---
+          // --- もりボタン（常設、条件を満たし、かつ自分が直前の宣言者でない時のみ押せる） ---
           Padding(
             padding: const EdgeInsets.only(bottom: 20),
             child: ElevatedButton(
-              onPressed: canMori ? onMori : null, // 押せるかどうかの判定
+              onPressed: canMori ? onMori : null, 
               style: ElevatedButton.styleFrom(
                 backgroundColor: moriPhase == 'mori_declared' ? Colors.red : Colors.orange, 
-                disabledBackgroundColor: Colors.grey[700], // 押せない時はグレー
+                disabledBackgroundColor: Colors.grey[700], 
                 padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 15)
               ),
               child: Text(
@@ -216,7 +225,7 @@ class GameBoardView extends StatelessWidget {
               child: CardWidget(
                 number: myHand[i].number, 
                 suit: myHand[i].suit, 
-                onTap: () => onCardTap(i) // タップで即座にプレイ
+                onTap: () => onCardTap(i) 
               )
             )
           )
