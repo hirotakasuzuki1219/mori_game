@@ -14,7 +14,6 @@ class GameRoomPage extends StatefulWidget {
   State<GameRoomPage> createState() => _GameRoomPageState();
 }
 
-// WidgetsBindingObserver を追加してアプリのバックグラウンド放置を監視
 class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver {
   late final FirebaseDB _db;
   StreamSubscription? _sub;
@@ -39,8 +38,11 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
   Timer? _moriTimer;         
   String _lastTrackedMoriPlayer = ''; 
 
+  // 【今回の追加】自分がこのゲーム中にもり/もり返しを宣言したかのフラグ
+  bool hasDeclaredMori = false;
+
   // 部屋の開閉状態管理フラグ
-  String roomStatus = 'open'; // 'open', 'closed'
+  String roomStatus = 'open'; 
   bool _isClosedDialogShown = false;
 
   bool get isHost => myId == hostId;
@@ -48,25 +50,23 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // ライフサイクル監視の開始
+    WidgetsBinding.instance.addObserver(this); 
     _db = FirebaseDB(widget.roomId);
     _init();
   }
 
   @override
   void dispose() {
-    _cleanupRoomOnLeave(); // 退室時のクリーンアップ
-    WidgetsBinding.instance.removeObserver(this); // ライフサイクル監視の解除
+    _cleanupRoomOnLeave(); 
+    WidgetsBinding.instance.removeObserver(this); 
     _sub?.cancel();
     _moriTimer?.cancel();
     super.dispose();
   }
 
-  // ホストがアプリをバックグラウンド（放置）にした時の検知
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (isHost && (state == AppLifecycleState.paused || state == AppLifecycleState.detached)) {
-      // ホストがアプリを閉じる、または別タブ放置などで完全にバックグラウンドに入ったら即座に部屋を閉鎖
       _closeRoomForcefully();
     }
   }
@@ -74,20 +74,17 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
   Future<void> _init() async {
     final snap = await _db.getSnapshot();
     if (!snap.exists) {
-      // ホスト：山札作成と初期化
       List<CardWidget> fullDeck = _generateDeck()..shuffle();
       final hand = fullDeck.sublist(0, 5);
       fullDeck.removeRange(0, 5);
       
       await _db.setupRoom(myId, fullDeck, widget.isPrivate);
       
-      // 不意の通信切断（タブを閉じる、回線落ち）に備えて、Firebase側に削除/閉鎖予約を入れる
       final roomRef = FirebaseDatabase.instance.ref('rooms/${widget.roomId}');
       await roomRef.onDisconnect().update({'roomStatus': 'closed'});
 
       setState(() => myHand = hand);
     } else {
-      // ゲスト：参加処理
       bool isStarted = snap.child('gameStarted').value == true;
       String currentStatus = snap.child('roomStatus').value as String? ?? 'open';
       
@@ -150,7 +147,11 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       lastMoriPlayerId = data['lastMoriPlayerId'];
       loserPlayerId = data['loserPlayerId'];
 
-      // --- 部屋の閉鎖監視ロジック ---
+      // 通常状態（none）に戻ったら、自分の宣言フラグをリセットする
+      if (moriPhase == 'none') {
+        hasDeclaredMori = false;
+      }
+
       if (roomStatus == 'closed' && !isHost && !_isClosedDialogShown) {
         _isClosedDialogShown = true;
         _sub?.cancel();
@@ -180,24 +181,20 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
     });
   }
 
-  // 正常な画面離脱時（戻るボタンなど）の処理
   void _cleanupRoomOnLeave() {
     if (isHost) {
       _closeRoomForcefully();
     } else {
-      // ゲストが抜ける場合は、プレイヤーリストから自分を消すだけ
       List<String> updatedPlayers = List<String>.from(playerIds)..remove(myId);
       _db.updateGameStatus({
         'players': updatedPlayers,
-        'playerHands/$myId': null // 手札データも削除
+        'playerHands/$myId': null 
       });
     }
   }
 
-  // 部屋を強制閉鎖する内部メソッド
   void _closeRoomForcefully() {
     _db.updateGameStatus({'roomStatus': 'closed'});
-    // 数秒後にノード自体を完全に削除してクリーンアップ（任意）
     Timer(const Duration(seconds: 2), () {
       FirebaseDatabase.instance.ref('rooms/${widget.roomId}').remove();
     });
@@ -219,11 +216,18 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
     }
   }
 
+  // もり・もり返しボタンを押した時の処理
   void _onMori() {
     if (GameRules.isValidMori(fieldNumber, myHand)) {
+      // 自分が宣言したことをローカルに記憶（View側で即座にボタンをグレーアウトさせる）
+      setState(() {
+        hasDeclaredMori = true;
+      });
+
       if (moriPhase == 'none') {
         if (lastPlayerId == myId) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('自滅はできません！')));
+          setState(() { hasDeclaredMori = false; });
           return;
         }
         _db.updateGameStatus({
@@ -234,10 +238,11 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       } else if (moriPhase == 'mori_declared') {
         _db.updateGameStatus({
           'lastMoriPlayerId': myId,
-          'loserPlayerId': lastMoriPlayerId,
+          'loserPlayerId': lastMoriPlayerId, // 直前の宣言者が新たな暫定敗者に
         });
       }
-      _executePlay(myHand, isMoriAction: true);
+      
+      // 【重要】手札は減らさず、公開キープ状態のままFirebaseの状態だけを更新
     }
   }
 
@@ -264,7 +269,7 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
     });
   }
 
-  void _executePlay(List<CardWidget> cards, {bool isMoriAction = false}) {
+  void _executePlay(List<CardWidget> cards) {
     if (cards.isEmpty) return;
     final lastCard = cards.last;
     int myIdx = playerIds.indexOf(myId);
@@ -276,21 +281,16 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       }
     });
 
-    Map<String, dynamic> updates = {
+    _db.updateGameStatus({
       'field': {'number': lastCard.number, 'suit': lastCard.suit.name},
       'playerHands/$myId': myHand.length,
-    };
+      'lastPlayerId': myId,
+      'currentTurnIndex': nextTurnIndex,
+      'isInitialPhase': false,
+      'gameStarted': true,
+    });
 
-    if (!isMoriAction) {
-      updates['lastPlayerId'] = myId;
-      updates['currentTurnIndex'] = nextTurnIndex;
-      updates['isInitialPhase'] = false;
-      updates['gameStarted'] = true;
-    }
-
-    _db.updateGameStatus(updates);
-
-    if (myHand.isEmpty && !isMoriAction) {
+    if (myHand.isEmpty) {
       _db.updateGameStatus({'winnerId': myId});
     }
   }
@@ -356,6 +356,7 @@ class _GameRoomPageState extends State<GameRoomPage> with WidgetsBindingObserver
       myHand: myHand, playerIds: playerIds, myId: myId, handCounts: handCounts, 
       currentTurnIndex: currentTurn, isHost: isHost, lastPlayerId: lastPlayerId, 
       isInitialPhase: isInitialPhase, moriPhase: moriPhase, 
+      hasDeclaredMori: hasDeclaredMori, // View側へ自分の宣言状態を渡す
       onCardTap: _onCardTap, onMori: _onMori, onDraw: _onDraw, onFlip: _onFlip,
     );
   }
